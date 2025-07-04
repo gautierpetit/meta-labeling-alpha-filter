@@ -1,4 +1,5 @@
-import config
+import importlib
+
 import joblib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -6,15 +7,21 @@ import pandas as pd
 import shap
 import yfinance as yf
 from lightgbm import LGBMClassifier
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import (RandomizedSearchCV, TimeSeriesSplit,
-                                     cross_val_score, train_test_split)
+                                     cross_val_score)
 from sklearn.preprocessing import StandardScaler
 from ta.momentum import RSIIndicator
 from ta.trend import ADXIndicator
 from tqdm import tqdm
+
+import config
 from utils import (backtest_strategy, filter_signals_with_meta_model,
                    generate_momentum_signals, get_trade_outcomes)
+
+importlib.reload(config)
+
 
 """
 Theme: “Turning noisy signals into reliable trades through predictive filtering”
@@ -24,22 +31,6 @@ Objective: Build a meta-model that learns when your base strategy is likely to s
 """
 1. Base Strategy ("Primary Model")
 
-Data:
-Get daily prices on US stocks, SP500 constituents
-
-Split the data into training and test sets
-
-Momentum: 
-
-Strategy that selects stocks based on their returns over the previous 12 months
-and then holds them for 3 months
-
-Generate binary signals: 1 = take trade, 0 = no trade
-
-"""
-
-
-"""
 Classic Jegadeesh & Titman (1993) momentum strategy:
 
 Monthly signal generation: At the end of each month, compute each stocks 12-month past return (excluding the most recent month — often called a 1-month gap).
@@ -78,12 +69,6 @@ for date in monthly_signals.index:
 # Mask signals to only be valid when data is available (avoid applying signals during NaN periods)
 daily_signals = daily_signals.where(~prices.isna(), other=0)
 
-"""
-daily_signals: a DataFrame of shape (daily_dates, tickers) where:
-    1 = selected based on momentum
-    0 = not selected
-    NaNs are avoided — signal only active when prices exist
-"""
 
 
 # Calculate daily returns based on daily prices
@@ -110,13 +95,11 @@ spy_cumulative = (1 + spy_returns.fillna(0)).cumprod().squeeze()
 2. Meta-Labeling Problem Setup
 Define the true outcome of each trade:
 Did it reach a profit target (TP) or hit a stop-loss (SL)?
+
 Y = 1 if the trade was successful (TP hit), 0 if it was unsuccessful (SL hit)
 
+X = features
 
-X = features at signal time
-features = price, volatility (historical or VIX), serial correlation, earnings dates (or surprises), market cap, volume (illiquidity), beta, sentiment, FF factors ?, autocorrelation, etc.
-
-Label: 1 = trade was good (TP hit), 0 = bad (SL hit)
 
 """
 
@@ -298,25 +281,20 @@ assert X.isnull().sum().sum() == 0  # No missing features
 assert X.shape[0] == Y.shape[0]
 assert (X.index == Y.index).all()
 
+Y.to_frame().to_parquet(config.Y)
+X.to_parquet(config.X)
+
+
 
 """
 3. Meta-Model
 Use a classifier to predict the probability of success for each trade
-RandomForestClassifier, XGBClassifier, etc...
-May use hyperparameter tuning to optimize the model with GridSearchCV or RandomizedSearchCV
-May use model calibration with CalibratedClassifierCV
-
-Calculate feature importance to understand which features are most predictive
-with permutation_importance or feature_importances_
-
-Train the model on the training set.
-Get accuracy on the training set.
-
-Predict on the test set
-Explain the model's predictions using SHAP or LIME
 
 
 """
+X = pd.read_parquet(config.X)
+Y = pd.read_parquet(config.Y)
+
 
 # Scale features before training
 scaler = StandardScaler()
@@ -325,20 +303,15 @@ X_scaled = pd.DataFrame(
 )
 
 #FIXME: Split data using sklearn
-X_train = X_scaled.loc[:"2020-12-31"]
-Y_train = Y.loc[:"2020-12-31"]
+X_train = X_scaled.loc[:config.TRAIN_END_DATE]
+Y_train = Y.loc[:config.TRAIN_END_DATE]
 
-X_test = X_scaled.loc["2021-01-01":]
-Y_test = Y.loc["2021-01-01":]
+X_test = X_scaled.loc[config.TEST_START_DATE:]
+Y_test = Y.loc[config.TEST_START_DATE:]
 
-
-
-"""X_train, X_test, Y_train, Y_test = train_test_split(
-    X_train_scaled, Y, test_size=0.2, random_state=config.RANDOM_STATE
-)"""
 
 # Set up time series cross-validation
-tscv = TimeSeriesSplit(n_splits=5)
+tscv = TimeSeriesSplit(n_splits=config.CV_N_SPLITS)
 
 # Define model
 lgbm = LGBMClassifier(
@@ -352,13 +325,12 @@ lgbm = LGBMClassifier(
 
 
 
-
 search = RandomizedSearchCV(
     estimator=lgbm,
     param_distributions=config.HYPERPARAM_SPACE,
-    n_iter=30,
+    n_iter=config.RANDOM_SEARCH_ITER,
     cv=tscv,
-    scoring="roc_auc",
+    scoring=config.CV_SCORING,
     verbose=2,
     n_jobs=config.N_JOBS,
     random_state=config.RANDOM_STATE,
@@ -383,49 +355,44 @@ print("Test Accuracy:", test_score)
 
 # Initialize and train the LightGBM model
 clf = search.best_estimator_
+
+joblib.dump(clf, config.BEST_MODEL_PATH)
+# clf = joblib.load(config.BEST_MODEL_PATH)
+
 clf.fit(X_train, Y_train)
 
 
-"""
-from sklearn.calibration import CalibratedClassifierCV
 
 calibrated_clf = CalibratedClassifierCV(estimator=clf, method='sigmoid', cv=tscv)
 calibrated_clf.fit(X_train, Y_train)
 
-"""
 
 
 # Evaluate with cross_val_score (accuracy)
-scores = cross_val_score(clf, X_train, Y_train, cv=tscv, scoring="accuracy")
+scores = cross_val_score(calibrated_clf, X_train, Y_train, cv=tscv, scoring="accuracy")
 print(f"Mean accuracy across splits: {np.mean(scores):.4f}")
 print("All CV scores:", scores)
 
 # Get accuracy on the training set
-train_accuracy = clf.score(X_train, Y_train)
+train_accuracy = calibrated_clf.score(X_train, Y_train)
 print(f"Training accuracy: {train_accuracy:.2f}")
 
 # Predict on the test set
-test_accuracy = clf.score(X_test, Y_test)
+test_accuracy = calibrated_clf.score(X_test, Y_test)
 print(f"Test accuracy: {test_accuracy:.2f}")
 
 
-y_test_proba = clf.predict_proba(X_test)[:, 1]
+y_test_proba = calibrated_clf.predict_proba(X_test)[:, 1]
 print("Test ROC AUC:", roc_auc_score(Y_test, y_test_proba))
 
 
-joblib.dump(clf, config.BEST_MODEL_PATH)
-joblib.load(config.BEST_MODEL_PATH)
-
 cv_results = pd.DataFrame(search.cv_results_)
-top_models = cv_results.sort_values("mean_test_score", ascending=False).head(5)
-print(top_models[["params", "mean_test_score", "rank_test_score"]])
-
-
-# Explain the model's predictions using SHAP or LIME
+cv_results = cv_results.sort_values("mean_test_score", ascending=False)
+cv_results.to_excel(config.CV_MODELS)
 
 
 # Create a SHAP explainer
-explainer = shap.Explainer(clf)
+explainer = shap.Explainer(calibrated_clf)
 explanation = explainer(X_test)
 
 # Global feature importance
@@ -446,7 +413,7 @@ plt.savefig(config.FIGURES_DIR / "shap_scatter.png")
 
 shap_values_class1 = explanation.values
 shap_values_df = pd.DataFrame(
-    explanation, columns=X_test.columns, index=X_test.index
+    shap_values_class1, columns=X_test.columns, index=X_test.index
 )
 shap_values_df.to_parquet(config.SHAP_VALUES_PARQUET)
 
@@ -457,8 +424,6 @@ shap_values_df.to_parquet(config.SHAP_VALUES_PARQUET)
 Use the meta-model to filter the base strategy's signals
 Only take trades where meta-model predicts high success probability, can add confidence bands
 
-Use the meta-model's predicted probability as a position size scaler ?
-
 Apply thresholding on predicted probabilities (e.g., only take trades with P(success) > 0.6), and create a new filtered_signals DataFrame with the same shape as daily_signals.
 
 Then compute the performance again using filtered_signals instead of daily_signals.
@@ -466,24 +431,12 @@ Then compute the performance again using filtered_signals instead of daily_signa
 """
 
 filtered_signals = filter_signals_with_meta_model(
-    daily_signals=daily_signals, clf=clf, X_meta_test=X_test, threshold=config.META_PROBA_THRESHOLD
+    daily_signals=daily_signals, clf=calibrated_clf, X_test=X_test, threshold=config.META_PROBA_THRESHOLD
 )
 
 
 """
 5. Backtesting and evaluation
-
-Use the existing performance pipeline and summary function to compare:
-base_strategy_returns
-filtered_strategy_returns
-spy_returns
-
-Also count:
-Trade count
-Win rate (e.g. from outcomes)
-Sharpe
-Drawdown
-Turnover
 
 """
 

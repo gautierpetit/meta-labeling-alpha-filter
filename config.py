@@ -7,7 +7,7 @@ RANDOM_STATE = 42
 N_JOBS = -1  # Use all available cores
 
 # === PATHS ===
-ROOT_DIR = Path("meta-labeling-alpha-filter")
+ROOT_DIR = Path("")
 
 DATA_DIR = ROOT_DIR / "data"
 FIGURES_DIR = ROOT_DIR / "figures"
@@ -30,15 +30,15 @@ FILTERED_PRICES = DATA_DIR / "S&P500_PIT.parquet"
 FILTERED_VOLUMES = DATA_DIR / "S&P500_PIT_volumes.parquet"
 FILTERED_HIGH = DATA_DIR / "S&P500_PIT_high.parquet"
 FILTERED_LOW = DATA_DIR / "S&P500_PIT_low.parquet"
+X = DATA_DIR / "X.parquet"
+Y = DATA_DIR / "Y.parquet"
 
 # === MODELING SETTINGS ===
 TOP_QUANTILE = 0.9
 TARGET_TP_THRESHOLD = 0.20
 TARGET_SL_THRESHOLD = 0.05
 
-CV_N_SPLITS = 5
-RANDOM_SEARCH_ITER = 30
-CV_SCORING = "roc_auc"
+
 
 # === HYPERPARAMETER SEARCH SPACE ===
 HYPERPARAM_SPACE = {
@@ -55,6 +55,13 @@ HYPERPARAM_SPACE = {
 }
 
 # === META MODEL SETTINGS ===
+TRAIN_END_DATE = "2020-12-31"
+TEST_START_DATE = "2021-01-01"
+
+CV_N_SPLITS = 5
+RANDOM_SEARCH_ITER = 30
+CV_SCORING = "roc_auc"
+
 META_PROBA_THRESHOLD = 0.6
 
 # === BACKTESTING ===
@@ -65,4 +72,5 @@ MISSING_DATA_REPORT = DATA_DIR / "missing_count.xlsx"
 TICKER_AVAILABILITY_REPORT = DATA_DIR / "ticker_availability.xlsx"
 PERFORMANCE_SUMMARY_XLSX = RESULTS_DIR / "performance_summary.xlsx"
 BEST_MODEL_PATH = MODELS_DIR / "best_lgbm_model.pkl"
+CV_MODELS = MODELS_DIR / "cv_models.pkl"
 SHAP_VALUES_PARQUET = RESULTS_DIR / "shap_values.parquet"

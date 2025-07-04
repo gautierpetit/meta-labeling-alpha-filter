@@ -183,30 +183,23 @@ def backtest_strategy(
     summary_spy = summarize_performance(bench_spy.loc[start:])
     summary_mom = summarize_performance(bench_mom.loc[start:])
 
-    # Optional additional info
-    if trade_count is not None:
-        summary["Trade Count"] = trade_count
-    if win_rate is not None:
-        summary["Win Rate"] = f"{win_rate:.2%}"
-
     # Plotting
     if plot:
         plt.figure(figsize=(12, 6))
-        plt.plot(cumulative, label=name)
+        plt.plot(cumulative.loc[start:], label=name)
         plt.plot(
             spy_cumulative.loc[start:] / spy_cumulative.loc[start:].iloc[0],
             label="SPY", color="black"
         )
         plt.plot(
             mom_cumulative.loc[start:] / mom_cumulative.loc[start:].iloc[0],
-            label="Standard Momentum", color="red", linestyle="--"
+            label="Momentum", color="red"
         )
         plt.title(f"Cumulative Returns: {name} vs Benchmarks")
         plt.legend()
         plt.xlabel("Date")
         plt.ylabel("Cumulative Return")
         plt.grid(True)
-        plt.tight_layout()
         plt.savefig(
             f"{config.FIGURES_DIR / name.lower().replace(' ', '_')}_vs_spy.png"
         )
