@@ -2,4 +2,4 @@ __pycache__/
 *.log
 scratchpad.txt
 *.pdf
-scratchpad.py
+config_private.py

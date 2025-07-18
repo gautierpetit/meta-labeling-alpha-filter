@@ -1,6 +1,4 @@
 import pandas as pd
-import yfinance as yf
-from pathlib import Path
 
 import config
 
@@ -9,6 +7,7 @@ def load_prices() -> pd.DataFrame:
     """Load filtered daily price data."""
     return pd.read_parquet(config.FILTERED_PRICES)
 
+
 def load_monthly_prices() -> pd.DataFrame:
     """
     Return month-end resampled filtered prices.
@@ -16,10 +15,12 @@ def load_monthly_prices() -> pd.DataFrame:
     daily = load_prices()
     return daily.resample("ME").last()
 
+
 def load_returns() -> pd.DataFrame:
     """Load daily returns"""
     prices = load_prices()
     return prices.pct_change(fill_method=None)
+
 
 def load_volumes() -> pd.DataFrame:
     """Load filtered daily volume data."""
@@ -49,7 +50,7 @@ def load_spy_prices() -> pd.Series:
     """
     Load SPY ETF closing prices for use as a benchmark.
     """
-    return pd.read_parquet(config.SPY)
+    return pd.read_parquet(config.SPY).squeeze()
 
 
 def load_spy_returns() -> pd.Series:
@@ -68,3 +69,12 @@ def load_labels() -> pd.Series:
 def load_features() -> pd.DataFrame:
     """Load saved feature matrix (X features)."""
     return pd.read_parquet(config.X)
+
+
+def load_rates() -> pd.DataFrame:
+    """Load the market yield on US Treasury 10 Year (DGS10)."""
+    rates = pd.read_csv(config.DGS10)
+    rates.index = pd.to_datetime(rates["observation_date"], format="%Y-%m-%d")
+    rates = rates.reindex(load_prices().index).ffill()
+    rates.drop(columns="observation_date", inplace=True)
+    return rates

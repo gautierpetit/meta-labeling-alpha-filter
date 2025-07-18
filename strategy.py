@@ -1,13 +1,12 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+
 from signals import generate_momentum_signals
 
 
-
 def get_daily_signals(
-    prices: pd.DataFrame, 
-    monthly_prices: pd.DataFrame
+    prices: pd.DataFrame, monthly_prices: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.MultiIndex]:
     """
     Generate daily trading signals based on monthly momentum ranking.
@@ -27,14 +26,16 @@ def get_daily_signals(
         MultiIndex (date, ticker) of active signal dates.
     """
     # Compute 12-month momentum with 1-month gap
-    momentum = monthly_prices.pct_change(12, fill_method=None) - monthly_prices.pct_change(1, fill_method=None)
+    momentum = monthly_prices.pct_change(
+        12, fill_method=None
+    ) - monthly_prices.pct_change(1, fill_method=None)
     monthly_signals = generate_momentum_signals(momentum)
 
     # Create daily signals with 3-month holding period
     daily_signals = pd.DataFrame(index=prices.index, columns=prices.columns, data=0)
     for date in monthly_signals.index:
         start = date + pd.offsets.MonthEnd(1)  # skip 1-month gap
-        end = start + pd.offsets.MonthEnd(2)   # hold for 3 months
+        end = start + pd.offsets.MonthEnd(2)  # hold for 3 months
         tickers = monthly_signals.columns[monthly_signals.loc[date] == 1]
         daily_signals.loc[start:end, tickers] = 1
 
@@ -48,9 +49,7 @@ def get_daily_signals(
 
 
 def compute_momentum(
-    prices: pd.DataFrame, 
-    daily_signals: pd.DataFrame, 
-    plot: bool = True
+    prices: pd.DataFrame, daily_signals: pd.DataFrame, plot: bool = True
 ) -> pd.Series:
     """
     Compute the daily returns of the momentum strategy.
@@ -78,9 +77,6 @@ def compute_momentum(
         (1 + mom_returns.fillna(0)).cumprod().plot(
             title="Momentum Strategy Performance", figsize=(12, 6)
         )
+        plt.close()
 
     return mom_returns
-
-
-
-
