@@ -1,5 +1,6 @@
 __pycache__/
 *.log
-scratchpad.txt
+scratchpad.*
 *.pdf
 config_private.py
+kt_nested_dir/

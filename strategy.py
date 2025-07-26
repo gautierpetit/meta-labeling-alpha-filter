@@ -48,6 +48,38 @@ def get_daily_signals(
     return daily_signals, signal_dates
 
 
+
+def get_daily_signals_long_short(
+    prices: pd.DataFrame,
+    monthly_signals: pd.DataFrame,
+    hold_months: int = 3,
+    skip_months: int = 1,
+) -> tuple[pd.DataFrame, pd.MultiIndex]:
+    """
+    Convert monthly long/short signals (-1/0/1) into daily signal matrix.
+
+    Returns:
+        daily_signals: Daily matrix with -1, 0, 1 values.
+        signal_dates: MultiIndex of (date, ticker) where trades are active.
+    """
+    daily_signals = pd.DataFrame(0, index=prices.index, columns=prices.columns)
+
+    for date in monthly_signals.index:
+        start = date + pd.offsets.MonthEnd(skip_months)
+        end = start + pd.offsets.MonthEnd(hold_months - 1)
+        tickers = monthly_signals.columns[monthly_signals.loc[date] != 0]
+
+        for ticker in tickers:
+            signal = monthly_signals.at[date, ticker]
+            daily_signals.loc[start:end, ticker] = signal
+
+    daily_signals = daily_signals.where(~prices.isna(), other=0)
+    signal_dates = daily_signals.stack()[daily_signals.stack() != 0].index
+
+    return daily_signals, signal_dates
+
+
+
 def compute_momentum(
     prices: pd.DataFrame, daily_signals: pd.DataFrame, plot: bool = True
 ) -> pd.Series:

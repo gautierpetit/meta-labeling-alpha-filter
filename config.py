@@ -43,6 +43,7 @@ Y = DATA_DIR / "Y.parquet"
 
 # === MODELING SETTINGS ===
 TOP_QUANTILE = 0.9
+BOTTOM_QUANTILE = 0.1
 PT_SL_FACTOR = (
     4,
     3,
@@ -81,15 +82,40 @@ HYPERPARAM_BAYESIAN = {
     "bagging_freq": Integer(0, 10),
 }
 
+NN_HP_SPACE = {
+    "units1": [64, 128, 256, 512],
+    "units2": [64, 128, 256],
+    "units3": [64, 128],
+    "units4": [32, 64],
+    "l2_reg": [1e-6, 1e-5, 1e-4],
+    "activation": ["relu", "selu", "tanh"],
+    "n_hidden":{"min_value":1, "max_value":4, "step":1},
+    "dropout": {"min_value": 0.0, "max_value": 0.3, "step": 0.05},
+    "learning_rate": {"min_value": 1e-7, "max_value": 1e-4, "sampling": "log"},
+}
+
+
+LABEL_MAP = {-1: 0, 0: 1, 1: 2}
+
+NN_TRAINING_PARAMS = {
+    "epochs": 100,
+    "batch_size": 128,
+    "max_trials":50,
+    "early_stopping_patience": 15,
+    "early_stopping_min_delta": 1e-4,
+}
+
 # === META MODEL SETTINGS ===
 TRAIN_END_DATE = "2020-12-31"
 TEST_START_DATE = "2021-01-01"
 
-CV_N_SPLITS = 5  # 5
-RANDOM_SEARCH_ITER = 50  # 50
+CV_N_SPLITS = 3  # 5
+
+RANDOM_SEARCH_ITER = 20  # 50
 CV_SCORING = "neg_log_loss"  # "f1_weighted", "accuracy", "neg_log_loss"
 
-META_PROBA_THRESHOLD = 0.45
+
+META_PROBA_THRESHOLD = 0.5 # 0.45
 
 
 # === BACKTESTING ===
@@ -102,4 +128,7 @@ TICKER_AVAILABILITY_REPORT = DATA_DIR / "ticker_availability.xlsx"
 PERFORMANCE_SUMMARY_XLSX = RESULTS_DIR / "performance_summary.xlsx"
 BEST_MODEL_PATH = MODELS_DIR / "best_lgbm_model.pkl"
 BEST_CAL_PATH = MODELS_DIR / "best_cal_model.pkl"
+BEST_MLP = MODELS_DIR / "best_mlp.pkl"
+MLP_CAL = MODELS_DIR / "mlp_calibrated.pkl"
+
 CV_MODELS = MODELS_DIR / "cv_models.pkl"
