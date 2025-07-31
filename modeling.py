@@ -21,6 +21,11 @@ from sklearn.preprocessing import StandardScaler
 from skopt import BayesSearchCV
 
 import config
+from config import (
+    FOLD1_START, FOLD1_END,
+    FOLD2_START, FOLD2_END,
+    FOLD3_START, FOLD3_END
+)
 from data_loader import load_features, load_labels
 
 logger = logging.getLogger(__name__)
@@ -43,24 +48,24 @@ def scale_features(X: pd.DataFrame) -> pd.DataFrame:
     return X_scaled
 
 
+
 def split_train_test(
     X: pd.DataFrame, Y: pd.Series
-) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
+) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
     """
-    Split feature matrix and labels into train and test sets using config-defined dates.
-
-    Args:
-        X (pd.DataFrame): Feature matrix.
-        Y (pd.Series): Labels.
-
-    Returns:
-        Tuple: (X_train, Y_train, X_test, Y_test)
+    Split feature matrix and labels into 3 folds using config-defined date ranges.
     """
-    X_train = X.loc[: config.TRAIN_END_DATE]
-    Y_train = Y.loc[: config.TRAIN_END_DATE]
-    X_test = X.loc[config.TEST_START_DATE :]
-    Y_test = Y.loc[config.TEST_START_DATE :]
-    return X_train, Y_train, X_test, Y_test
+    X_fold1 = X.loc[FOLD1_START:FOLD1_END]
+    Y_fold1 = Y.loc[FOLD1_START:FOLD1_END]
+
+    X_fold2 = X.loc[FOLD2_START:FOLD2_END]
+    Y_fold2 = Y.loc[FOLD2_START:FOLD2_END]
+
+    X_fold3 = X.loc[FOLD3_START:FOLD3_END]
+    Y_fold3 = Y.loc[FOLD3_START:FOLD3_END]
+
+    return X_fold1, X_fold2, X_fold3, Y_fold1, Y_fold2, Y_fold3
+
 
 
 def train_meta_model(
@@ -124,7 +129,7 @@ def train_meta_model(
     best_model = search.best_estimator_
     logger.info(f"Best estimator: {best_model}")
 
-    joblib.dump(best_model, config.BEST_MODEL_PATH)
+    joblib.dump(best_model, config.CLF_PATH)
 
     return best_model
 
@@ -151,7 +156,7 @@ def calibrate_model(
     )
     calibrated_clf.fit(X, Y)
 
-    joblib.dump(calibrated_clf, config.BEST_CAL_PATH)
+    joblib.dump(calibrated_clf, config.CLF_CAL_PATH)
     return calibrated_clf
 
 def evaluate_model(

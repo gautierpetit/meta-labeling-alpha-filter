@@ -20,6 +20,7 @@ from data_loader import (
 )
 from labeling import apply_triple_barrier
 from strategy import get_daily_signals
+from modeling import scale_features
 
 logger = logging.getLogger(__name__)
 
@@ -341,3 +342,63 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+def build_meta_features(
+        X_base: pd.DataFrame,
+        base_model_lgbm,
+        base_model_mlp,
+        scale: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Build meta features by augmenting original features with:
+        - LGBM predicted probabilities
+        - MLP predicted probabilities
+        - LGBM predicted class
+        - MLP predicted class
+
+        Args:
+            X_base (pd.DataFrame): Input features to apply base models on.
+            base_model_lgbm: Calibrated LightGBM model (must have .predict_proba and .predict).
+            base_model_mlp: KerasSoftmaxWrapper for MLP model.
+            scale (bool): Whether to standard scale the result.
+
+        Returns:
+            pd.DataFrame: Augmented meta feature set.
+        """
+
+        # LGBM Probabilities
+        P_lgbm = pd.DataFrame(
+            base_model_lgbm.predict_proba(X_base),
+            index=X_base.index,
+            columns=[f"proba_clf_{cls}" for cls in base_model_lgbm.classes_]
+        )
+
+        # MLP Probabilities
+        P_mlp = pd.DataFrame(
+            base_model_mlp.predict_proba(X_base),
+            index=X_base.index,
+            columns=[f"proba_mlp_{cls}" for cls in base_model_mlp.class_labels_]
+        )
+
+        # Predicted classes
+        Pred_lgbm = pd.DataFrame(
+            base_model_lgbm.predict(X_base),
+            index=X_base.index,
+            columns=["clf_pred"]
+        )
+
+        Pred_mlp = pd.DataFrame(
+            base_model_mlp.predict(X_base),
+            index=X_base.index,
+            columns=["mlp_pred"]
+        )
+
+        # Concatenate original features and meta-features
+        X_meta = pd.concat([X_base, P_lgbm, P_mlp, Pred_lgbm, Pred_mlp], axis=1)
+
+        if scale:
+            X_meta = scale_features(X_meta)
+
+        return X_meta

@@ -17,60 +17,67 @@ def apply_triple_barrier(
     max_holding_period: int = config.MAX_HOLDING_PERIOD,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Applies the triple barrier labeling method and outputs binary labels + label_times for purging.
+    Applies the triple barrier method for long/short trades.
+
+    Parameters:
+        prices: Daily price data.
+        daily_signals: Signal matrix with values in {-1, 0, 1}.
+        volatility: Rolling volatility estimates.
+        pt_sl_factor: Tuple of (pt_multiplier, sl_multiplier).
+        max_holding_period: Maximum holding period in days.
 
     Returns:
-        - labels_binary: DataFrame of binary labels (1 = TP, 0 = SL), excludes undecided (time limit)
-        - label_times: Multi-index DataFrame with t0 (entry time) and t1 (label resolution time)
+        labels: DataFrame with {1=TP, -1=SL, 0=timeout}.
+        label_times: DataFrame with (t0, t1) for trade resolution.
     """
     labels = pd.DataFrame(index=daily_signals.index, columns=daily_signals.columns)
     t1_matrix = pd.DataFrame(index=daily_signals.index, columns=daily_signals.columns)
 
-    for date in tqdm(daily_signals.index):
-        tickers = daily_signals.columns[daily_signals.loc[date] == 1]
+    for date in tqdm(daily_signals.index, desc="Applying Triple Barrier"):
+        tickers = daily_signals.columns[daily_signals.loc[date] != 0]
         for ticker in tickers:
+            side = daily_signals.at[date, ticker]  # 1 for long, -1 for short
             entry_price = prices.at[date, ticker]
             vol = volatility.at[date, ticker]
 
             if pd.isna(entry_price) or pd.isna(vol):
                 continue
 
-            tp_level = entry_price * (1 + pt_sl_factor[0] * vol)
-            sl_level = entry_price * (1 - pt_sl_factor[1] * vol)
+            if side == 1:  # Long trade
+                tp_level = entry_price * (1 + pt_sl_factor[0] * vol)
+                sl_level = entry_price * (1 - pt_sl_factor[1] * vol)
+            else:  # Short trade
+                tp_level = entry_price * (1 - pt_sl_factor[0] * vol)
+                sl_level = entry_price * (1 + pt_sl_factor[1] * vol)
 
             future_dates = prices.index[prices.index > date][:max_holding_period]
             future_prices = prices.loc[future_dates, ticker]
 
             label = 0
             for future_date, price in future_prices.items():
-                if price >= tp_level:
+                if (side == 1 and price >= tp_level) or (side == -1 and price <= tp_level): # Profitable trade
                     label = 1
                     t1_matrix.at[date, ticker] = future_date
                     break
-                elif price <= sl_level:
+                elif (side == 1 and price <= sl_level) or (side == -1 and price >= sl_level): # Unprofitable trade
                     label = -1
                     t1_matrix.at[date, ticker] = future_date
                     break
             else:
-                # No barrier hit: use last date of window as time barrier
                 if not future_dates.empty:
                     t1_matrix.at[date, ticker] = future_dates[-1]
 
             labels.at[date, ticker] = label
 
-    # Only keep clear TP/SL, drop time-barrier trades
-    labels_binary = labels[labels != 0].replace({-1: 0, 1: 1}).dropna(how="all")
-
-    # Construct label_times: DataFrame with MultiIndex (t0, asset) -> t1
     label_times = (
         t1_matrix.stack()
         .rename("t1")
         .to_frame()
         .assign(t0=lambda df: df.index.get_level_values(0))
-        .loc[labels_binary.stack().index]
     )
 
     return labels, label_times
+
 
 
 def scan_pt_sl_grid(
@@ -120,7 +127,7 @@ def scan_pt_sl_grid(
         plt.figure(figsize=(6, 4))
         sns.heatmap(pivot, annot=True, cmap="coolwarm")
         plt.title(f"Proportion of {label}")
-        plt.savefig(config.FIGURES_DIR / "heatmanp_TP_SL.png")
+        plt.savefig(config.FIGURES_DIR / f"heatmap_TP_SL_{label}.png")
         plt.close()
 
     results.to_excel(config.MODELS_DIR / "pt_sl_grid.xlsx")

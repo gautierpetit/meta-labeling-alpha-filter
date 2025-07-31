@@ -1,15 +1,18 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
-from signals import generate_momentum_signals
-
+import config
 
 def get_daily_signals(
-    prices: pd.DataFrame, monthly_prices: pd.DataFrame
+    prices: pd.DataFrame,
+    monthly_prices: pd.DataFrame,
+    long_only: bool = config.LONG_ONLY,
+    hold_months: int = 3,
+    skip_months: int = 1,
 ) -> tuple[pd.DataFrame, pd.MultiIndex]:
     """
     Generate daily trading signals based on monthly momentum ranking.
+    Can return long-only or long-short signals.
 
     Parameters
     ----------
@@ -17,97 +20,90 @@ def get_daily_signals(
         Daily price data (used to mask NaNs).
     monthly_prices : pd.DataFrame
         Monthly price data (used to compute momentum signal).
+    long_short : bool
+        If True, generates long-short signals; else, long-only.
+    hold_months : int
+        Number of months to hold a position.
+    skip_months : int
+        Number of months to skip after the signal date.
 
     Returns
     -------
     daily_signals : pd.DataFrame
-        Binary signal matrix (1 if a stock is held, 0 otherwise).
+        Signal matrix (-1, 0, 1 values).
     signal_dates : pd.MultiIndex
-        MultiIndex (date, ticker) of active signal dates.
+        MultiIndex of (date, ticker) with active signals.
     """
-    # Compute 12-month momentum with 1-month gap
-    momentum = monthly_prices.pct_change(
-        12, fill_method=None
-    ) - monthly_prices.pct_change(1, fill_method=None)
-    monthly_signals = generate_momentum_signals(momentum)
-
-    # Create daily signals with 3-month holding period
-    daily_signals = pd.DataFrame(index=prices.index, columns=prices.columns, data=0)
-    for date in monthly_signals.index:
-        start = date + pd.offsets.MonthEnd(1)  # skip 1-month gap
-        end = start + pd.offsets.MonthEnd(2)  # hold for 3 months
-        tickers = monthly_signals.columns[monthly_signals.loc[date] == 1]
-        daily_signals.loc[start:end, tickers] = 1
-
-    # Mask signals during periods with missing price data
-    daily_signals = daily_signals.where(~prices.isna(), other=0)
-
-    # Extract (date, ticker) pairs with active signals
-    signal_dates = daily_signals[daily_signals == 1].stack().index
-
-    return daily_signals, signal_dates
-
-
-
-def get_daily_signals_long_short(
-    prices: pd.DataFrame,
-    monthly_signals: pd.DataFrame,
-    hold_months: int = 3,
-    skip_months: int = 1,
-) -> tuple[pd.DataFrame, pd.MultiIndex]:
-    """
-    Convert monthly long/short signals (-1/0/1) into daily signal matrix.
-
-    Returns:
-        daily_signals: Daily matrix with -1, 0, 1 values.
-        signal_dates: MultiIndex of (date, ticker) where trades are active.
-    """
+    momentum = monthly_prices.pct_change(12, fill_method=None) - monthly_prices.pct_change(1, fill_method=None)
     daily_signals = pd.DataFrame(0, index=prices.index, columns=prices.columns)
 
-    for date in monthly_signals.index:
+    for date in momentum.index:
+        momentums = momentum.loc[date]
         start = date + pd.offsets.MonthEnd(skip_months)
         end = start + pd.offsets.MonthEnd(hold_months - 1)
-        tickers = monthly_signals.columns[monthly_signals.loc[date] != 0]
 
-        for ticker in tickers:
-            signal = monthly_signals.at[date, ticker]
-            daily_signals.loc[start:end, ticker] = signal
+        
+        if long_only:
+            long_thresh = momentums.quantile(config.TOP_QUANTILE)
+            longs = momentums[momentums >= long_thresh].index
+            daily_signals.loc[start:end, longs] = 1
+
+        else:
+            long_thresh = momentums.quantile(config.TOP_QUANTILE)
+            short_thresh = momentums.quantile(config.BOTTOM_QUANTILE)
+            longs = momentums[momentums >= long_thresh].index
+            shorts = momentums[momentums <= short_thresh].index
+            daily_signals.loc[start:end, longs] = 1
+            daily_signals.loc[start:end, shorts] = -1
 
     daily_signals = daily_signals.where(~prices.isna(), other=0)
     signal_dates = daily_signals.stack()[daily_signals.stack() != 0].index
-
     return daily_signals, signal_dates
 
 
-
 def compute_momentum(
-    prices: pd.DataFrame, daily_signals: pd.DataFrame, plot: bool = True
+    prices: pd.DataFrame,
+    daily_signals: pd.DataFrame,
+    long_only: bool = config.LONG_ONLY,
+    plot: bool = True
 ) -> pd.Series:
     """
-    Compute the daily returns of the momentum strategy.
+    Compute the daily returns of a momentum strategy.
 
     Parameters
     ----------
     prices : pd.DataFrame
         Daily price data.
     daily_signals : pd.DataFrame
-        Binary signal matrix indicating which stocks are held each day.
+        Signal matrix (-1, 0, 1 values).
+    long_short : bool
+        Whether this is a long-short strategy.
     plot : bool, optional
-        Whether to plot the cumulative returns, by default True.
+        Whether to plot the cumulative returns.
 
     Returns
     -------
     pd.Series
-        Daily portfolio returns of the momentum strategy.
+        Daily strategy returns.
     """
     daily_returns = prices.pct_change(fill_method=None)
     strategy_returns = daily_returns * daily_signals
-    n_positions = daily_signals.sum(axis=1).replace(0, np.nan)
-    mom_returns = strategy_returns.sum(axis=1) / n_positions
+    
+    if long_only:
+        total_positions = (daily_signals != 0).sum(axis=1)
+    else:
+        long_count = (daily_signals == 1).sum(axis=1)
+        short_count = (daily_signals == -1).sum(axis=1)
+        total_positions = long_count + short_count
+
+
+    total_positions = total_positions.replace(0, np.nan)
+    mom_returns = strategy_returns.sum(axis=1) / total_positions
 
     if plot:
         (1 + mom_returns.fillna(0)).cumprod().plot(
-            title="Momentum Strategy Performance", figsize=(12, 6)
+            title="Momentum Strategy Performance" if long_only else "Long/Short Momentum Strategy",
+            figsize=(12, 6)
         )
         plt.close()
 

@@ -3,4 +3,4 @@ __pycache__/
 scratchpad.*
 *.pdf
 config_private.py
-kt_nested_dir/
+kt_*/

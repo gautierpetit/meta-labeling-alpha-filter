@@ -17,8 +17,8 @@ MODELS_DIR = ROOT_DIR / "models"
 RESULTS_DIR = ROOT_DIR / "results"
 SHAP_VALUES_DIR = ROOT_DIR / "shap"
 
-# Ensure directories exist (optional, but convenient)
-for path in [DATA_DIR, FIGURES_DIR, MODELS_DIR, RESULTS_DIR]:
+# Ensure directories exist
+for path in [DATA_DIR, FIGURES_DIR, MODELS_DIR, RESULTS_DIR, SHAP_VALUES_DIR]:
     path.mkdir(parents=True, exist_ok=True)
 
 # === DATA SETTINGS ===
@@ -42,11 +42,13 @@ X = DATA_DIR / "X.parquet"
 Y = DATA_DIR / "Y.parquet"
 
 # === MODELING SETTINGS ===
+LONG_ONLY = False
+INVERT_SIGNALS = True
 TOP_QUANTILE = 0.9
 BOTTOM_QUANTILE = 0.1
 PT_SL_FACTOR = (
-    4,
-    3,
+    5,
+    5,
 )  # low:3,3;high:6,6, bestyet:5,5;4,3  negloss 1500%cumul, 0.9SR, logloss
 MAX_HOLDING_PERIOD = 20
 
@@ -82,53 +84,66 @@ HYPERPARAM_BAYESIAN = {
     "bagging_freq": Integer(0, 10),
 }
 
-NN_HP_SPACE = {
-    "units1": [64, 128, 256, 512],
-    "units2": [64, 128, 256],
-    "units3": [64, 128],
-    "units4": [32, 64],
-    "l2_reg": [1e-6, 1e-5, 1e-4],
-    "activation": ["relu", "selu", "tanh"],
-    "n_hidden":{"min_value":1, "max_value":4, "step":1},
-    "dropout": {"min_value": 0.0, "max_value": 0.3, "step": 0.05},
-    "learning_rate": {"min_value": 1e-7, "max_value": 1e-4, "sampling": "log"},
-}
-
 
 LABEL_MAP = {-1: 0, 0: 1, 1: 2}
 
+NN_HP_SPACE = {
+    "units1": [64, 128, 256],
+    "units2": [64, 128],
+    "units3": [64],
+    "l2_reg": [1e-6, 1e-5],
+    "activation": ["relu"],
+    "n_hidden":{"min_value":2, "max_value":3, "step":1},
+    "dropout": {"min_value": 0.0, "max_value": 0.2, "step": 0.05},
+    "learning_rate": {"min_value": 1e-7, "max_value": 1e-3, "sampling": "log"},
+}
+
+
+
+
 NN_TRAINING_PARAMS = {
-    "epochs": 100,
-    "batch_size": 128,
-    "max_trials":50,
+    "epochs": 200,
+    "batch_size": 64, #64 better but slower
+    "max_trials":75, #50
     "early_stopping_patience": 15,
     "early_stopping_min_delta": 1e-4,
 }
 
 # === META MODEL SETTINGS ===
-TRAIN_END_DATE = "2020-12-31"
-TEST_START_DATE = "2021-01-01"
+# For stacking ensemble splits
+FOLD1_START = "2016-02-29"
+FOLD1_END   = "2020-12-31"
+
+FOLD2_START = "2021-01-01"
+FOLD2_END   = "2022-12-31"
+
+FOLD3_START = "2023-01-01"
+FOLD3_END   = "2024-12-31"
+
 
 CV_N_SPLITS = 3  # 5
 
-RANDOM_SEARCH_ITER = 20  # 50
+RANDOM_SEARCH_ITER = 50  # 50
 CV_SCORING = "neg_log_loss"  # "f1_weighted", "accuracy", "neg_log_loss"
 
 
-META_PROBA_THRESHOLD = 0.5 # 0.45
+META_PROBA_THRESHOLD = 0.45 # 0.45
 
 
 # === BACKTESTING ===
 BACKTEST_START_DATE = "2021-01-01"
-TRANSACTION_COSTS = 0.001  # 10 bps
+LONG_SIDE_TC = 0.001  # 10 bps
+SHORT_SIDE_TC = 0.001  # 20 bps
 
 # === OUTPUT FILES ===
 MISSING_DATA_REPORT = DATA_DIR / "missing_count.xlsx"
 TICKER_AVAILABILITY_REPORT = DATA_DIR / "ticker_availability.xlsx"
 PERFORMANCE_SUMMARY_XLSX = RESULTS_DIR / "performance_summary.xlsx"
-BEST_MODEL_PATH = MODELS_DIR / "best_lgbm_model.pkl"
-BEST_CAL_PATH = MODELS_DIR / "best_cal_model.pkl"
-BEST_MLP = MODELS_DIR / "best_mlp.pkl"
-MLP_CAL = MODELS_DIR / "mlp_calibrated.pkl"
+CLF_PATH = MODELS_DIR / "clf.pkl"
+CLF_CAL_PATH = MODELS_DIR / "clf_cal.pkl"
+MLPV1T = MODELS_DIR / "mlpv1t.pkl"
+MLPV1 = MODELS_DIR / "mlpv1.pkl"
+MLPV2T = MODELS_DIR / "mlpv2t.pkl"
+MLPV2 = MODELS_DIR / "mlpv2.pkl"
 
 CV_MODELS = MODELS_DIR / "cv_models.pkl"

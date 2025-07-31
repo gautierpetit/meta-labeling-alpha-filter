@@ -13,11 +13,34 @@ logger = logging.getLogger(__name__)
 
 
 
-def compute_drawdown(returns: pd.Series) -> pd.Series:
+def compute_drawdown(returns: pd.Series) -> tuple[pd.Series, int]:
+    """
+    Compute the drawdown and maximum drawdown duration for a series of returns.
+
+    Parameters
+    ----------
+    returns : pd.Series
+        Daily returns of the strategy.
+
+    Returns
+    -------
+    tuple[pd.Series, int]
+        - Drawdown series as a percentage.
+        - Maximum drawdown duration in days.
+    """
+    if not isinstance(returns, pd.Series):
+        raise TypeError("Input 'returns' must be a pandas Series.")
+
     cumulative = (1 + returns).cumprod()
     running_max = cumulative.cummax()
     drawdown = (cumulative / running_max) - 1.0
-    return drawdown
+
+    underwater = cumulative < running_max
+    durations = underwater.groupby((underwater != underwater.shift()).cumsum()).cumsum()
+    max_duration = int(durations.max()) if not durations.empty else 0
+
+    return drawdown, max_duration
+
 
 def plot_drawdown_underwater(
     returns: pd.Series,
@@ -27,30 +50,42 @@ def plot_drawdown_underwater(
     fixed_scale: bool = False,
     save: bool = True,
     file: str = "drawdown_underwater.png"
-):
+) -> None:
     """
     Plot drawdown under water graph for strategy and optional benchmark.
-    
-    Parameters:
-    - returns (pd.Series): Strategy periodic returns (indexed by datetime).
-    - bench_returns (pd.Series, optional): Benchmark returns.
-    - label (tuple): Labels for the legend (strategy, benchmark).
-    - figsize (tuple): Matplotlib figure size.
-    - fixed_scale (bool): Whether to fix y-axis to [-100, 0].
-    - save (bool): Whether to save the plot.
-    - filename (str): Filename for saving the plot (requires config.RESULTS_DIR).
+
+    Parameters
+    ----------
+    returns : pd.Series
+        Strategy periodic returns (indexed by datetime).
+    bench_returns : Optional[pd.Series], optional
+        Benchmark returns, by default None.
+    label : tuple, optional
+        Labels for the legend (strategy, benchmark), by default ("Strategy", "Benchmark").
+    figsize : tuple, optional
+        Matplotlib figure size, by default (12, 4).
+    fixed_scale : bool, optional
+        Whether to fix y-axis to [-100, 0], by default False.
+    save : bool, optional
+        Whether to save the plot, by default True.
+    file : str, optional
+        Filename for saving the plot (requires config.RESULTS_DIR), by default "drawdown_underwater.png".
+
+    Returns
+    -------
+    None
     """
     if not isinstance(returns, pd.Series):
         raise ValueError("Input 'returns' must be a pandas Series with datetime index.")
 
-    strategy_dd = compute_drawdown(returns)
+    strategy_dd, strategy_dd_duration = compute_drawdown(returns)
 
     plt.figure(figsize=figsize)
     plt.plot(strategy_dd * 100, label=f"{label[0]} Drawdown", color='steelblue')
     plt.fill_between(strategy_dd.index, strategy_dd * 100, 0, color='steelblue', alpha=0.3)
 
     if bench_returns is not None:
-        benchmark_dd = compute_drawdown(bench_returns[returns.index[0]:])
+        benchmark_dd, benchmark_dd_duration = compute_drawdown(bench_returns.loc[returns.index[0]:])
         plt.plot(benchmark_dd * 100, label=f"{label[1]} Drawdown", color='darkorange', linestyle='--')
 
     plt.title("Drawdown Under Water")
@@ -60,6 +95,18 @@ def plot_drawdown_underwater(
         plt.ylim([-100, 0])
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.legend()
+    plt.gca().text(
+        0.01, 0.35,
+        f"Max DD: {strategy_dd.min():.2%}\n"
+        f"Avg DD: {strategy_dd.mean():.2%}\n"
+        f"Max Duration: {strategy_dd_duration} days",
+        transform=plt.gca().transAxes,
+        fontsize=10,
+        verticalalignment='top',
+        horizontalalignment='left',
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="white", edgecolor="gray", alpha=0.7)
+    )
+
     plt.tight_layout()
 
     if save:
@@ -77,7 +124,8 @@ def plot_cumulative_returns(
     name: str = "Strategy",
     start: str = config.BACKTEST_START_DATE,
     save: bool = True,
-):
+    file: str = "cumulative_returns.png"
+) -> None:
     """
     Plots cumulative returns of the strategy vs SPY and a standard momentum benchmark.
 
@@ -97,17 +145,17 @@ def plot_cumulative_returns(
     mom_cumulative = (1 + mom.fillna(0)).cumprod()
 
     plt.figure(figsize=(12, 6))
-    plt.plot(cumulative.loc[start:], label=name)
-    plt.plot(cumulative_costs.loc[start:], label=f"{name} with costs")
+    plt.plot(cumulative.loc[start:], label=f"{name}, Cumulative: {cumulative.loc[start:].iloc[-1]:.2f}", color='steelblue')
+    plt.plot(cumulative_costs.loc[start:], label=f"{name} net, Cumulative: {cumulative_costs.loc[start:].iloc[-1]:.2f}", color='grey')
     plt.plot(
         spy_cumulative.loc[start:] / spy_cumulative.loc[start:].iloc[0],
-        label="SPY",
+        label=f"SPY, Cumulative: {spy_cumulative.loc[start:].iloc[-1]:.2f}",
         color="black"
     )
     plt.plot(
         mom_cumulative.loc[start:] / mom_cumulative.loc[start:].iloc[0],
-        label="Momentum",
-        color="red"
+        label=f"Momentum, Cumulative: {mom_cumulative.loc[start:].iloc[-1]:.2f}",
+        color="darkorange"
     )
     plt.suptitle(f"Cumulative Returns: {name} vs Benchmarks")
     plt.xlabel("Date")
@@ -116,7 +164,7 @@ def plot_cumulative_returns(
     plt.grid(True)
 
     if save:
-        filename = config.RESULTS_DIR / f"{name.lower().replace(' ', '_')}_vs_spy.png"
+        filename = config.RESULTS_DIR / file
         plt.savefig(filename)
         logger.info(f"Cumulative returns plot saved to: {filename}")
     plt.close()
@@ -124,9 +172,10 @@ def plot_cumulative_returns(
 def plot_turnover(
     turnover: pd.Series,
     name: str = "Strategy",
-    window: int = 20,
-    save: bool = True
-):
+    window: int = 5,
+    save: bool = True,
+    file: str = "avg_turnover.png"
+) -> None:
     """
     Plots rolling average turnover.
 
@@ -137,15 +186,17 @@ def plot_turnover(
     - save: If True, saves the plot to disk.
     """
     plt.figure(figsize=(12, 6))
-    plt.plot(turnover.rolling(window).mean(), label=f"{window}-day avg turnover")
+    plt.plot(turnover.rolling(window).mean(), label=f"{window}-day avg turnover, Max: {turnover.max():.2f}")
+    plt.axhline(turnover.mean(), color="steelblue", linestyle="--", alpha=0.7, label=f"Average Turnover: {turnover.mean():.2f}")
     plt.suptitle(f"Turnover Trend: {name}")
+    plt.title(f"Total turnover: {turnover.sum():.2f}")
     plt.xlabel("Date")
     plt.ylabel("Turnover")
     plt.grid(True)
     plt.legend()
 
     if save:
-        filename = config.RESULTS_DIR / f"{name.lower().replace(' ', '_')}_turnover_avg.png"
+        filename = config.RESULTS_DIR / file
         plt.savefig(filename)
         logger.info(f"Turnover plot saved to: {filename}")
     plt.close()
@@ -183,17 +234,21 @@ def plot_rolling_correlation(strategy_returns: pd.Series,
     """
 
 
-    startegy_corr = strategy_returns.rolling(window).corr(
+    strategy_corr_rolling = strategy_returns.rolling(window).corr(
         spy_returns
     )
-    mom_corr = mom_returns.rolling(window).corr(
+    mom_corr_rolling = mom_returns.rolling(window).corr(
         spy_returns
     )
 
+    strategy_corr = strategy_returns.corr(spy_returns)
+    mom_corr = mom_returns.corr(spy_returns)
+
     plt.figure(figsize=figsize)
-    plt.plot(startegy_corr, label=f"{name} vs SPY", color='steelblue')
-    plt.plot(mom_corr, label="Momentum vs SPY", color='darkorange')
-    plt.axhline(0, color='gray', linestyle='--', alpha=0.6)
+    plt.plot(strategy_corr_rolling, label=f"{name}, Std Dev: {strategy_corr_rolling.std():.2f}", color='steelblue')
+    plt.plot(mom_corr_rolling, label=f"Momentum, Std Dev: {mom_corr_rolling.std():.2f}", color='darkorange')
+    plt.axhline(strategy_corr, color='steelblue', linestyle='--', label=f"Overall Correlation: {strategy_corr:.2f}", alpha=0.6)
+    plt.axhline(mom_corr, color='darkorange', linestyle='--', label=f"Overall Correlation: {mom_corr:.2f}", alpha=0.6)
     plt.title(f"{window}-Day Rolling Correlation to SPY")
     plt.ylabel("Correlation")
     plt.xlabel("Date")
@@ -219,15 +274,16 @@ def plot_leverage(weights_df: pd.DataFrame,
     daily_leverage = weights_df.abs().sum(axis=1)
     net_exposure = weights_df.sum(axis=1)
     plt.figure(figsize=figsize)
-    plt.plot(daily_leverage, label="Daily Leverage (Gross)",color='steelblue')
-    plt.plot(net_exposure, label="Daily Net Exposure",color='grey')
+    plt.plot(daily_leverage, label=f"Daily Leverage (Gross): Max {daily_leverage.max():.2f}",color='steelblue')
+    plt.plot(net_exposure, label=f"Daily Net Exposure: Max {net_exposure.max():.2f}",color='grey')
     plt.axhline(daily_leverage.mean(), color="steelblue", linestyle="--", alpha=0.7, label=f"Average Leverage: {daily_leverage.mean():.2f}")
     plt.axhline(net_exposure.mean(), color="grey", linestyle="--", alpha=0.7, label=f"Average Net Exposure: {net_exposure.mean():.2f}")
-    plt.title("Daily Leverage Over Time")
+    plt.title("Daily Leverage: " + name)
     plt.ylabel("Leverage")
     plt.xlabel("Date")
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.legend()
+    
     plt.tight_layout()
     if save:
         filename = config.RESULTS_DIR / file
@@ -272,7 +328,7 @@ def plot_rolling_sharpe(strategy_returns: pd.Series,
     plt.plot(r_sharpe, label=f"{name}", color='steelblue')
     plt.plot(r_sharpe_mom, label="Momentum", color='darkorange')
 
-    # Optional: horizontal average lines
+    
     plt.axhline(r_sharpe.mean(), color='steelblue', linestyle='--', alpha=0.7, label=f"Avg Sharpe {name}: {round(r_sharpe.mean(),2)}")
     plt.axhline(r_sharpe_mom.mean(), color='darkorange', linestyle='--', alpha=0.7, label=f"Avg Sharpe Momentum: {round(r_sharpe_mom.mean(),2)}")
 
@@ -331,7 +387,7 @@ def compute_pnl_per_trade(weights_df: pd.DataFrame,
                           returns: pd.DataFrame) -> pd.Series:
     """
     Efficiently computes realized PnL per trade.
-    
+
     Parameters
     ----------
     weights_df : pd.DataFrame
@@ -340,19 +396,24 @@ def compute_pnl_per_trade(weights_df: pd.DataFrame,
         Entry signals where 1 indicates trade entry.
     returns : pd.DataFrame
         Daily returns per asset.
-        
+
     Returns
     -------
-    pd.Series of PnLs per trade.
+    pd.Series
+        Realized PnL per trade, indexed by (date, asset).
     """
+    if not all(isinstance(df, pd.DataFrame) for df in [weights_df, filtered_signals, returns]):
+        raise TypeError("All inputs must be pandas DataFrames.")
+
     pnl_list = []
-    trade_keys = []  # store (date, asset)
+    trade_keys = []  # Store (date, asset)
 
     for asset in filtered_signals.columns:
         entries = filtered_signals.index[filtered_signals[asset] == 1]
         for entry_date in entries:
             if entry_date not in weights_df.index:
                 continue
+
             weight = weights_df.at[entry_date, asset]
             if weight == 0:
                 continue
@@ -366,17 +427,23 @@ def compute_pnl_per_trade(weights_df: pd.DataFrame,
 
             trade_pnl = (trade_weights * trade_returns).sum()
             pnl_list.append(trade_pnl)
-            trade_keys.append((entry_date, asset))  # <- save entry point
+            trade_keys.append((entry_date, asset))
 
     return pd.Series(pnl_list, index=pd.MultiIndex.from_tuples(trade_keys, names=["date", "asset"]), name="Trade PnL")
 
 
-
-
-
-def compute_alpha_beta(strategy_returns: pd.Series, benchmark_returns: pd.Series) -> tuple[float, float]:
+def plot_alpha_beta(
+    strategy_returns: pd.Series,
+    benchmark_returns: pd.Series,
+    name: str = "Strategy",
+    bench_name: str = "SPY",
+    figsize: tuple = (6, 6),
+    save: bool = True,
+    file: str = "alpha_beta_regression.png",
+    plot: bool = False
+) -> tuple[float, float]:
     """
-    Computes CAPM-style alpha and beta from linear regression.
+    Plot strategy returns vs. benchmark with CAPM-style regression line.
 
     Parameters
     ----------
@@ -384,21 +451,58 @@ def compute_alpha_beta(strategy_returns: pd.Series, benchmark_returns: pd.Series
         Daily returns of the strategy.
     benchmark_returns : pd.Series
         Daily returns of the benchmark (e.g., SPY).
+    name : str, optional
+        Label for the strategy, by default "Strategy".
+    bench_name : str, optional
+        Label for the benchmark, by default "SPY".
+    figsize : tuple, optional
+        Size of the plot, by default (6, 6).
+    save : bool, optional
+        Whether to save the figure, by default True.
+    file : str, optional
+        Output filename (inside config.RESULTS_DIR), by default "alpha_beta_regression.png".
+    plot : bool, optional
+        Whether to display the plot, by default False.
 
     Returns
     -------
-    alpha : float
-        Annualized alpha (intercept × 252).
-    beta : float
-        Regression beta coefficient (sensitivity to benchmark).
+    tuple[float, float]
+        Annualized alpha and beta of the strategy relative to the benchmark.
     """
+    if not isinstance(strategy_returns, pd.Series) or not isinstance(benchmark_returns, pd.Series):
+        raise TypeError("Both 'strategy_returns' and 'benchmark_returns' must be pandas Series.")
+
     df = pd.concat([strategy_returns, benchmark_returns], axis=1).dropna()
-    X = df.iloc[:, 1].values.reshape(-1, 1)  # Benchmark
+    x = df.iloc[:, 1].values.reshape(-1, 1)  # Benchmark
     y = df.iloc[:, 0].values  # Strategy
 
-    reg = LinearRegression().fit(X, y)
-    alpha = reg.intercept_ * 252
+    reg = LinearRegression().fit(x, y)
+    alpha = reg.intercept_ * 252  # Annualized
     beta = reg.coef_[0]
+
+    if plot:
+        x_pred = np.linspace(x.min(), x.max(), 100).reshape(-1, 1)
+        y_pred = reg.predict(x_pred)
+
+        plt.figure(figsize=figsize)
+        plt.scatter(x, y, alpha=0.3, s=10, label="Daily Returns")
+        plt.plot(x_pred, y_pred, color='red', label=f"Fit: y = {beta:.2f}x + {alpha:.2f}")
+        plt.axhline(0, color='gray', linestyle='--', linewidth=1)
+        plt.axvline(0, color='gray', linestyle='--', linewidth=1)
+
+        plt.xlabel(f"{bench_name} Daily Returns")
+        plt.ylabel(f"{name} Daily Returns")
+        plt.title(f"{name} vs. {bench_name} – Alpha/Beta Regression")
+        plt.legend()
+        plt.grid(True, linestyle='--', alpha=0.5)
+        plt.tight_layout()
+
+        if save:
+            filename = config.RESULTS_DIR / file
+            plt.savefig(filename)
+            logger.info(f"Alpha-Beta plot saved to: {filename}")
+
+        plt.close()
 
     return alpha, beta
 
@@ -407,133 +511,154 @@ def compute_alpha_beta(strategy_returns: pd.Series, benchmark_returns: pd.Series
 
 def summarize_performance(
     returns: pd.Series,
-    bench_spy:pd.Series,
+    bench_spy: pd.Series,
     filtered_signals: Optional[pd.DataFrame] = None,
     Y: Optional[pd.Series] = None,
     turnover: Optional[pd.Series] = None,
     weights_df: Optional[pd.DataFrame] = None,
     strategy: bool = True,
 ) -> pd.Series:
-    """
-    Summarize key performance metrics for a return series.
-
-    Parameters:
-        returns (pd.Series): Daily returns of the strategy.
-        filtered_signals (Optional[pd.DataFrame]): Binary signal matrix (1s where trades occur).
-        Y (Optional[pd.Series]): Meta-labels (+1, 0, -1 or binary).
-        turnover (Optional[pd.Series]): Daily turnover values.
-        weights_df (Optional[pd.DataFrame]): Weights matrix used for execution. Trades with zero weight are excluded.
-        strategy (bool): Whether to compute strategy-specific metrics (e.g., win rate, trade count).
-
-    Returns:
-        pd.Series: Performance summary.
-    """
     returns = returns.dropna()
     cumulative = (1 + returns).prod() - 1
     annualized_return = (1 + cumulative) ** (252 / len(returns)) - 1
     annualized_vol = returns.std() * np.sqrt(252)
-    semi_vol = returns[returns<0].std() * np.sqrt(252)
+    semi_vol = returns[returns < 0].std() * np.sqrt(252)
     sharpe = annualized_return / annualized_vol if annualized_vol > 0 else np.nan
     sortino = annualized_return / semi_vol if semi_vol > 0 else np.nan
-    max_drawdown = compute_drawdown(returns).min()
-    avg_drawdown = compute_drawdown(returns).mean()
+    drawdown, drawdown_duration = compute_drawdown(returns)
+    max_drawdown = drawdown.min()
+    avg_drawdown = drawdown.mean()
     var = returns.quantile(0.05)
     cvar = returns[returns <= var].mean()
     skew = returns.skew()
     kurt = returns.kurt()
     corr = returns.corr(bench_spy)
-    corr_std = returns.rolling(20).corr(bench_spy).std()
-    alpha, beta = compute_alpha_beta(returns, bench_spy)
-    
+    #corr_std = returns.rolling(20).corr(bench_spy).std()
+    alpha, beta = plot_alpha_beta(returns, bench_spy)
+    monthly_returns = returns.resample("M").sum()
+
+
 
     summary = pd.Series(
         {
-            "Cumulative Return": f"{cumulative:.2%}",
+            #"Cumulative Return": f"{cumulative:.2%}",
             "Annualized Return": f"{annualized_return:.2%}",
             "Annualized Vol": f"{annualized_vol:.2%}",
-            "Semi-volatility":f"{semi_vol:.2%}",
+            "Semi-volatility": f"{semi_vol:.2%}",
             "Sharpe Ratio": f"{sharpe:.2f}",
             "Sortino Ratio": f"{sortino:.2f}",
-            #"Minimum Return": f"{returns.min():.2%}",
-            #"Maximum Return": f"{returns.max():.2%}",
+            "Conditional VaR (CVaR)": f"{cvar:.2%}",
+
             "Max Drawdown": f"{max_drawdown:.2%}",
             "Avg Drawdown": f"{avg_drawdown:.2%}",
-            #"Value at Risk (VaR)": f"{var:.2%}",
-            "Conditional VaR (CVaR)": f"{cvar:.2%}",
+            "Max Drawdown Duration (days)": drawdown_duration,
             "Skew": f"{skew:.3f}",
             "Kurtosis": f"{kurt:.3f}",
+
             "Correlation to SPY": f"{corr:.3f}",
-            "Std Dev Correlation": f"{corr_std:.3f}",
+            # "Std Dev Correlation": f"{corr_std:.3f}",
             "Alpha": f"{alpha:.3f}",
-            "Beta": f"{beta:.3f}"
+            "Beta": f"{beta:.3f}",
+            "Positive Months": f"{(monthly_returns > 0).sum()}",
+            "Negative Months": f"{(monthly_returns < 0).sum()}",
+
         }
     )
 
-    if strategy:
-        # Use weights > 0 as mask to identify *actually traded* signals
+    if strategy and filtered_signals is not None and Y is not None:
+        # Apply trading mask if weights_df is available
+        traded_signals = filtered_signals.copy()
         if weights_df is not None:
-            traded_mask = weights_df > 0
-            traded_signals = filtered_signals[traded_mask]
-        else:
-            traded_signals = filtered_signals.copy()
+            traded_signals[weights_df == 0] = 0
 
-        traded_idx = traded_signals.stack()[traded_signals.stack() == 1].index
+        stacked_trades = traded_signals.stack()
+        traded_idx = stacked_trades[stacked_trades != 0].index
         traded_outcomes = Y.loc[Y.index.isin(traded_idx)]
-        
+
         total = len(traded_outcomes)
-        
-        aligned_weights = weights_df.stack().loc[traded_outcomes.index]
 
-        long_mask = weights_df.stack() > 0
+        aligned_weights = (
+            weights_df.stack().loc[traded_outcomes.index]
+            if weights_df is not None
+            else pd.Series(np.nan, index=traded_outcomes.index)
+        )
+        assert aligned_weights.index.equals(traded_outcomes.index)
+
+        long_mask = aligned_weights > 0
         short_mask = aligned_weights < 0
-        long_wins = (traded_outcomes == 1) & long_mask
-        short_wins = (traded_outcomes == -1) & short_mask
-        long_total = long_mask.sum()
-        short_total = short_mask.sum()
-        # Win rate per side
-        long_hit_rate = long_wins.sum() / long_total if long_total > 0 else np.nan
-        short_hit_rate = short_wins.sum() / short_total if short_total > 0 else np.nan
 
-        
-        leverage = weights_df.abs().sum(axis=1) if weights_df is not None else pd.Series(np.nan, index=returns.index)
+        long_trades = traded_outcomes[long_mask]
+        short_trades = traded_outcomes[short_mask]
 
-        net_exposure = weights_df.sum(axis=1)
-        
-        avg_holding_period = traded_signals.sum().mean()
-        #avg_pnl = cumulative / total if total > 0 else "N/A"
+        long_hit_rate = (long_trades == 1).sum() / len(long_trades) if len(long_trades) > 0 else np.nan
+        short_hit_rate = (short_trades == -1).sum() / len(short_trades) if len(short_trades) > 0 else np.nan
 
-        
 
+        # Leverage and Exposure
+        """if weights_df is not None:
+            leverage = weights_df.abs().sum(axis=1)
+            net_exposure = weights_df.sum(axis=1)
+        else:
+            leverage = pd.Series(np.nan, index=returns.index)
+            net_exposure = pd.Series(np.nan, index=returns.index)"""
+
+        # Holding period: average streak of nonzero entries in traded_signals
+        holding_periods = []
+        for _, ticker_signals in traded_signals.items():
+            active = (ticker_signals != 0).astype(int)
+            streak = 0
+            for val in active:
+                if val == 1:
+                    streak += 1
+                else:
+                    if streak > 0:
+                        holding_periods.append(streak)
+                    streak = 0
+            if streak > 0:
+                holding_periods.append(streak)
+        avg_holding_period = np.mean(holding_periods) if holding_periods else 0.0
+
+        # Trade PnL stats
         asset_returns = load_returns()
         trade_pnls = compute_pnl_per_trade(weights_df, filtered_signals, asset_returns)
 
-        profit_factor = trade_pnls[trade_pnls > 0].sum() / -trade_pnls[trade_pnls < 0].sum()
+        total_wins = (trade_pnls > 0).sum()
+        #total_losses = (trade_pnls < 0).sum()
+        losses_sum = -trade_pnls[trade_pnls < 0].sum()
+        profit_factor = (
+            trade_pnls[trade_pnls > 0].sum() / losses_sum if losses_sum > 0 else np.nan
+        )
 
-        wins = (trade_pnls > 0).sum()
-
+        # Weighted win rate
         trade_weights = weights_df.stack().loc[trade_pnls.index].abs()
         win_indicators = (trade_pnls > 0).astype(int)
-        weighted_win_rate = (win_indicators * trade_weights).sum() / trade_weights.sum()
+        weighted_win_rate = (
+            (win_indicators * trade_weights).sum() / trade_weights.sum()
+            if trade_weights.sum() > 0
+            else np.nan
+        )
 
-
-        summary["Avg Leverage (Gross)"] = round(leverage.mean(),2)
-        summary["Max Leverage (Gross)"] = round(leverage.max(),2)
-        summary["Avg Net Exposure"] = round(net_exposure.mean(),2)
+        #summary["Avg Leverage (Gross)"] = round(leverage.mean(), 2)
+        #summary["Max Leverage (Gross)"] = round(leverage.max(), 2)
+        #summary["Avg Net Exposure"] = round(net_exposure.mean(), 2)
         summary["Trade Count"] = total
-        summary["Win Rate"] = f"{(wins / len(trade_pnls)):.2%}" if len(trade_pnls) > 0 else "N/A"
-        summary["Avg Daily Turnover"] = round(turnover.mean(),2)
+        summary["Win Rate"] = f"{(total_wins / len(trade_pnls)):.2%}" if len(trade_pnls) > 0 else "N/A"
+        #summary["Avg Daily Turnover"] = round(turnover.mean(), 2) if turnover is not None else np.nan
+        #summary["Total Daily Turnover"] = round(turnover.sum(), 2) if turnover is not None else np.nan
         summary["TP Trades"] = (traded_outcomes == 1).sum()
         summary["SL Trades"] = (traded_outcomes == -1).sum()
         summary["Timeout / No Signal"] = (traded_outcomes == 0).sum()
         summary["Avg Holding Period (days)"] = round(avg_holding_period, 2)
-        summary["Notional-Weighted Win Rate"] = f"{weighted_win_rate:.2%}"
+        summary["Notional-Weighted Win Rate"] = f"{weighted_win_rate:.2%}" if not np.isnan(weighted_win_rate) else "N/A"
         summary["Avg PnL per Trade"] = f"{trade_pnls.mean():.2%}"
+        
         summary["Median PnL per Trade"] = f"{trade_pnls.median():.2%}"
-        summary["Profit Factor"] = f"{profit_factor:.2f}"
+        summary["Profit Factor"] = f"{profit_factor:.2f}" if not np.isnan(profit_factor) else "N/A"
         summary["Long Hit Rate"] = f"{long_hit_rate:.2%}" if not np.isnan(long_hit_rate) else "N/A"
         summary["Short Hit Rate"] = f"{short_hit_rate:.2%}" if not np.isnan(short_hit_rate) else "N/A"
 
     return summary.astype(str)
+
 
 
 
@@ -543,6 +668,7 @@ def backtest_strategy(
     turnover: pd.Series,
     bench_spy: pd.Series,
     bench_mom: pd.Series,
+    bench_mom_ls: pd.Series,
     filtered_signals: pd.DataFrame,
     Y: pd.Series,
     weights_df: pd.DataFrame,
@@ -589,6 +715,7 @@ def backtest_strategy(
     )
     summary_spy = summarize_performance(bench_spy.loc[start:],bench_spy, strategy=False)
     summary_mom = summarize_performance(bench_mom.loc[start:],bench_spy, strategy=False)
+    summary_mom_ls = summarize_performance(bench_mom_ls.loc[start:],bench_spy, strategy=False)
 
     # Plotting
     if plot:
@@ -607,13 +734,16 @@ def backtest_strategy(
         plot_rolling_correlation(strategy_returns,bench_spy,bench_mom, save=save)
         plot_leverage(weights_df,name)
         plot_rolling_sharpe(strategy_returns,bench_mom,method="compound",save=save)
+        plot_alpha_beta(strategy_returns, bench_spy,plot=True, name=name, save=save)
 
-    summary_df = pd.concat([summary, summary_costs, summary_spy, summary_mom], axis=1)
+
+    summary_df = pd.concat([summary, summary_costs, summary_spy, summary_mom, summary_mom_ls], axis=1)
     summary_df.columns = [
-        f"{name} (No Costs)",
-        f"{name} (With Costs)",
+        f"{name} (Gross)",
+        f"{name} (Net)",
         "SPY",
         "Standard Momentum",
+        "Standard Momentum (Long Short)"
     ]
     if save:
         summary_df.to_excel(config.PERFORMANCE_SUMMARY_XLSX)

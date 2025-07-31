@@ -2,35 +2,25 @@ import logging
 from time import time
 
 import joblib
-import pandas as pd
 import numpy as np
+import pandas as pd
+from tensorflow.keras.models import load_model
 
 import config
 from config_private import NTFY_SERVER
-from data_loader import (
-    load_features,
-    load_labels,
-    load_monthly_prices,
-    load_prices,
-    load_returns,
-    load_spy_returns,
-)
+from data_loader import (load_features, load_labels, load_monthly_prices,
+                         load_prices, load_returns, load_spy_returns)
 from evaluation import backtest_strategy
+from features import build_meta_features
 from features import main as build_and_save_features
-from modeling import (
-    calibrate_model,
-    evaluate_model,
-    scale_features,
-    split_train_test,
-    train_meta_model,
-)
+from mlp_modeling import KerasSoftmaxWrapper, mlp_nested_cv
+from modeling import (calibrate_model, evaluate_model, scale_features,
+                      split_train_test, train_meta_model)
 from notifications import send_notification
-from shap_analysis import explain_model, plot_shap_beeswarm, save_shap_values,explain_mlp
+from shap_analysis import explain_model
 from signals import filter_signals_with_meta_model
 from sizing import compute_probability_weighted_returns
-from strategy import compute_momentum, get_daily_signals,get_daily_signals_long_short, compute_momentum_long_short
-from mlp_modeling import mlp_nested_cv,KerasCalibrationCV
-from tensorflow.keras.models import load_model
+from strategy import compute_momentum, get_daily_signals
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -38,8 +28,8 @@ logging.basicConfig(
 
 
 def main():
+    
     start = time()
-
     logging.info("=== 1. Load raw data ===")
     prices = load_prices()
     monthly_prices = load_monthly_prices()
@@ -47,12 +37,15 @@ def main():
     spy_returns = load_spy_returns()
 
     logging.info("=== 2. Generate base strategy signals ===")
-    daily_signals_lo, signal_dates = get_daily_signals(prices, monthly_prices)
-    mom_returns_lo = compute_momentum(prices, daily_signals_lo)
-    
-    daily_signals_ls, signal_dates_ls = get_daily_signals_long_short(prices, monthly_prices)
-    mom_returns_ls = compute_momentum_long_short(prices, daily_signals_ls)
-    
+    daily_signals_lo, signal_dates_lo = get_daily_signals(
+        prices, monthly_prices, long_only=True
+    )
+    mom_returns_lo = compute_momentum(prices, daily_signals_lo, long_only=True)
+
+    daily_signals_ls, signal_dates_ls = get_daily_signals(
+        prices, monthly_prices, long_only=False
+    )
+    mom_returns_ls = compute_momentum(prices, daily_signals_ls, long_only=False)
 
     logging.info("=== 3. Build and save features ===")
     build_and_save_features()
@@ -61,116 +54,132 @@ def main():
     X = load_features()
     Y = load_labels().squeeze()
     # X_scaled = scale_features(X)
-    X_train, Y_train, X_test, Y_test = split_train_test(X, Y)
+    X_fold1, X_fold2, X_fold3, Y_fold1, Y_fold2, Y_fold3 = split_train_test(X, Y)
 
-    X_train_scaled = scale_features(X_train)
-    X_test_scaled = scale_features(X_test)
+    X_fold1_scaled = scale_features(X_fold1)
+    X_fold2_scaled = scale_features(X_fold2)
+    
 
     logging.info("=== 5. Classifier Training and calibration ===")
-    clf = train_meta_model(X_train, Y_train, "Bayesian")
-    # clf = joblib.load(config.BEST_MODEL_PATH)
+    clf = train_meta_model(X_fold1, Y_fold1, "Bayesian")
+    # clf = joblib.load(config.CLF_PATH)
 
-    calibrated_clf = calibrate_model(clf, X_train, Y_train)
-    # calibrated_clf = joblib.load(config.BEST_CAL_PATH)
-
+    clf_cal = calibrate_model(clf, X_fold1, Y_fold1)
+    # clf_cal = joblib.load(config.CLF_CAL_PATH)
 
     logging.info("=== 6. Classifier Analysis ===")
     # CLF Feature explanation
-    shap_values = explain_model(
-        model=clf, X_test=X_test, type="clf"
-    )
+    shap_values_clf = explain_model(model=clf, X_test=X_fold2, name="CLF")
 
     # CLF fit analysis
-    acc, auc, logloss = evaluate_model(calibrated_clf, X_test, Y_test, "LightGBM")
-    logging.info(f"Test Accuracy: {acc:.4f}")
-    logging.info(f"Test ROC AUC: {auc:.4f}")
-    logging.info(f"Test Log loss: {logloss:.4f}")
+    acc_clf, auc_clf, logloss_clf = evaluate_model(
+        clf_cal, X_fold2, Y_fold2, "CLF"
+    )
+    logging.info(f"Test Accuracy: {acc_clf:.4f}")
+    logging.info(f"Test ROC AUC: {auc_clf:.4f}")
+    logging.info(f"Test Log loss: {logloss_clf:.4f}")
 
-      
-    logging.info("=== MPL training and calibration ===")
-    mlp_nested, best_fold_hp, acc_mlp,auc_mlp,ll_mlp, hparams = mlp_nested_cv(X_train_scaled, Y_train, "Bayesian" )
-    # mlp_nested = load_model(config.BEST_MLP)
+    logging.info("=== 7. MLP training and calibration ===")
+    mlp_v1t, best_fold_hp_v1t, acc_mlp_v1t, auc_mlp_v1t, ll_mlp_v1t, hparams_v1t = (
+        mlp_nested_cv(X_fold1_scaled, Y_fold1, "Bayesian", "mlpv1t")
+    )
+    # mlp_v1t = load_model(config.MLPV1T)
 
-    mlp_calibrated = KerasCalibrationCV(mlp_nested,method="sigmoid")
-    mlp_calibrated.fit(X_train_scaled,Y_train)
-    joblib.dump(mlp_calibrated,config.MLP_CAL)
-    # mlp_calibrated = joblib.load(config.MLP_CAL)
+    mlp_v1 = KerasSoftmaxWrapper(mlp_v1t, label_map=config.LABEL_MAP)
 
-    logging.info("=== MLP Analysis ===")
+    joblib.dump(mlp_v1, config.MLPV1)
+    # mlp_v1 = joblib.load(config.MLPV1)
+
+    logging.info("=== 8. MLP Analysis ===")
     # MLP Feature explanation
-    shap_values_nn = explain_model(
-        mlp_nested, X_test_scaled, "mlp",X_train_scaled
+    shap_values_v1t = explain_model(mlp_v1t, X_fold2_scaled, name="MLPV1T", X_train=X_fold1_scaled)
+
+    # MLP fit analysis
+    acc_mlp_v1, auc_mlp_v1, ll_mlp_v1 = evaluate_model(
+        mlp_v1, X_fold2_scaled, Y_fold2, "MLPV1"
+    )
+    logging.info(f"Test Accuracy: {acc_mlp_v1:.4f}")
+    logging.info(f"Test ROC AUC: {auc_mlp_v1:.4f}")
+    logging.info(f"Test Log loss: {ll_mlp_v1:.4f}")
+
+    logging.info("=== 9. Generate Meta-features ===")
+
+    X_meta_f2_scaled = build_meta_features(X_fold2, clf_cal, mlp_v1, scale=True)
+
+    X_meta_f3_scaled = build_meta_features(X_fold3, clf_cal, mlp_v1, scale=True)
+
+    logging.info("=== 10. Stacking Ensemble ===")
+
+    mlp_v2t, best_fold_hp_v2t, acc_mlp_v2t, auc_mlp_v2t, ll_mlp_v2t, hparams_v2t = (
+        mlp_nested_cv(X_meta_f2_scaled, Y_fold2, "Bayesian", "mlpv2t")
+    )
+    # mlp_v2t = load_model(config.MLPV2T)
+
+    mlp_v2 = KerasSoftmaxWrapper(mlp_v2t, label_map=config.LABEL_MAP)
+
+    joblib.dump(mlp_v2, config.MLPV2)
+    # mlp_v2 = joblib.load(config.MLPV2)
+
+    logging.info("=== 11. Meta MLP Analysis ===")
+    # MLP Feature explanation
+    shap_values_v2t = explain_model(
+        mlp_v2t, X_meta_f3_scaled, name="MLPV2T", X_train=X_meta_f2_scaled
     )
 
     # MLP fit analysis
-    acc_mlp, auc_mlp, ll_mlp = evaluate_model(mlp_calibrated, X_test_scaled, Y_test, "MLP")
-    logging.info(f"Test Accuracy: {acc_mlp:.4f}")
-    logging.info(f"Test ROC AUC: {auc_mlp:.4f}")
-    logging.info(f"Test Log loss: {ll_mlp:.4f}")
- 
-    logging.info("=== Stacking Ensemble ===")
+    acc_mlp_v2, auc_mlp_v2, ll_mlp_v2 = evaluate_model(
+        mlp_v2, X_meta_f3_scaled, Y_fold3, "MLPV2"
+    )
+    logging.info(f"Test Accuracy: {acc_mlp_v2:.4f}")
+    logging.info(f"Test ROC AUC: {auc_mlp_v2:.4f}")
+    logging.info(f"Test Log loss: {ll_mlp_v2:.4f}")
 
-
-
-
-
-
-
-
-
-
-
-    logging.info("=== 7. Meta-filtered signal generation ===")
+    logging.info("=== 12. Meta-filtered signal generation ===")
     filtered_signals = filter_signals_with_meta_model(
-        daily_signals=daily_signals_ls,
-        clf=mlp_calibrated,
-        X_test=X_test_scaled,
+        daily_signals=daily_signals_ls if config.LONG_ONLY else daily_signals_lo,
+        clf=mlp_v2,
+        X_test=X_meta_f3_scaled,
         threshold=config.META_PROBA_THRESHOLD,
     )
-
+    logging.info("=== 13. Probability Weighting / Vol Targeting ===")
     (
         filtered_mom_returns,
         filtered_mom_returns_costs,
         weights_mom,
         mom_turnover,
     ) = compute_probability_weighted_returns(
-        clf=mlp_calibrated,
-        X_test=X_test_scaled,
+        clf=mlp_v2,
+        X_test=X_meta_f3_scaled,
         returns=returns,
         threshold=config.META_PROBA_THRESHOLD,
-        tc=config.TRANSACTION_COSTS,
-        target_vol=0.3,  # 0.3
+        target_vol=0.2,  # 0.3
         vol_span=20,
         normalize=False,
         max_leverage=4,
-        long_only=False
     )
 
-    logging.info("=== 8. Backtest meta-filtered strategy ===")
+    logging.info("=== 14. Backtest meta-filtered strategy ===")
     summary = backtest_strategy(
-        strategy_returns=filtered_mom_returns[config.TEST_START_DATE:],
-        strategy_returns_w_costs=filtered_mom_returns_costs[config.TEST_START_DATE:],
-        turnover=mom_turnover[config.TEST_START_DATE:],
-        bench_spy=spy_returns[config.TEST_START_DATE:],
-        bench_mom=mom_returns_lo[config.TEST_START_DATE:],
-        filtered_signals=filtered_signals[config.TEST_START_DATE:],
-        Y=Y,
-        weights_df=weights_mom[config.TEST_START_DATE:],
-        name="Meta-Filtered Momentum",
+        strategy_returns=filtered_mom_returns[config.FOLD3_START :],
+        strategy_returns_w_costs=filtered_mom_returns_costs[config.FOLD3_START :],
+        turnover=mom_turnover[config.FOLD3_START :],
+        bench_spy=spy_returns[config.FOLD3_START :],
+        bench_mom=mom_returns_lo[config.FOLD3_START :],
+        bench_mom_ls=mom_returns_ls[config.FOLD3_START :],
+        filtered_signals=filtered_signals[config.FOLD3_START :],
+        Y=Y_fold3,
+        weights_df=weights_mom[config.FOLD3_START :],
+        name="Stacked MLP Meta-Labeling",
         plot=True,
         save=True,
     )
 
-    logging.info(f"=== Performance Summary === \n {summary}")
+    logging.info(f"=== Performance Summary === \n {summary[summary.columns[0]]}")
 
     end = time()
 
     send_notification(
-        message="ML training complete! \n"
-        f"Labeling factors: {config.PT_SL_FACTOR} \n"
-        f"Accuracy: {acc:.2%} \n"
-        f"ROC AUC: {auc:.2%} \n"
-        f"Test Log loss: {logloss:.4f}",
+        message=f"ML training complete! \nLabeling factors: {config.PT_SL_FACTOR} \n",
         topic=NTFY_SERVER,
         duration_seconds=end - start,
         title="Training Job Done",
