@@ -1,4 +1,5 @@
 import logging
+from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -19,25 +20,26 @@ from data_loader import (
     load_volumes,
 )
 from labeling import apply_triple_barrier
-from strategy import get_daily_signals
 from modeling import scale_features
+from strategy import get_daily_signals
 
 logger = logging.getLogger(__name__)
 
 
-def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
     """
     Generate feature matrix X and binary outcome labels Y for meta-modeling.
 
     Returns
     -------
     X : pd.DataFrame
-        Feature matrix indexed by (date, ticker)
+        Feature matrix indexed by (date, ticker).
     Y : pd.Series
-        Binary labels indicating trade success (1 = TP hit, 0 = SL hit)
+        Binary labels indicating trade success (1 = TP hit, 0 = SL hit).
     label_times : pd.Series
-        Time boundaries for labels, for model evaluation
+        Time boundaries for labels, for model evaluation.
     """
+    logger.info("Starting feature generation.")
 
     # Load data
     prices = load_prices()
@@ -53,10 +55,12 @@ def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     volatility = returns.rolling(20).std()
 
     # Labeling
+    logger.info("Generating labels using triple barrier method.")
     daily_signals, signal_dates = get_daily_signals(prices, monthly_prices)
     Y, label_times = apply_triple_barrier(prices, daily_signals, volatility)
 
     # Core price & return features
+    logger.info("Computing core price and return features.")
     log_prices = np.log(prices)
     returns_20d = prices.pct_change(20, fill_method=None)
     price_max_20d = prices.rolling(20).max()
@@ -67,6 +71,7 @@ def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     volatility_zscore = (volatility_20d - volatility_20d.mean()) / volatility_20d.std()
 
     # Momentum
+    logger.info("Computing momentum features.")
     momentum_10d = prices.pct_change(10, fill_method=None)
     momentum_20d = prices.pct_change(20, fill_method=None)
     momentum_20_5d = prices.pct_change(20, fill_method=None) - prices.pct_change(
@@ -76,6 +81,7 @@ def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     mom_persistence = (returns_20d > 0).rolling(20).mean()
 
     # Macro
+    logger.info("Computing macroeconomic features.")
     vix_feature = pd.DataFrame(
         np.tile(vix.values.reshape(-1, 1), (1, prices.shape[1])),
         index=prices.index,
@@ -95,6 +101,7 @@ def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     )
 
     # Correlation features
+    logger.info("Computing correlation features.")
     beta_20d = pd.DataFrame(index=prices.index, columns=prices.columns)
     corr_spy_20d = pd.DataFrame(index=prices.index, columns=prices.columns)
     for ticker in tqdm(prices.columns, desc="Computing Beta & Corr SPY"):
@@ -105,6 +112,7 @@ def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
         corr_spy_20d[ticker] = r.rolling(20).corr(spy_returns)
 
     # Calendar features
+    logger.info("Computing calendar features.")
     month_of_year_sin = (
         pd.DataFrame(np.sin(2 * np.pi * prices.index.month / 12), index=prices.index)
         .reindex(prices.index)
@@ -124,16 +132,31 @@ def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     ] = 1
 
     # Volume-based features
+    logger.info("Computing volume-based features.")
     volume_surge = volumes / volumes.rolling(20).mean()
 
-    def compute_ta_indicators(prices, high, low, volumes) -> dict:
+    # Skew-based features
+    logger.info("Computing skew-based features.")
+    return_skew_20d = returns.rolling(20).skew()
+    return_skew_60d = returns.rolling(60).skew()
+    volume_skew_20d = volumes.rolling(20).skew()
+
+    logger.info("Computing cross-sectional features.")
+
+    def xsrank(df: pd.DataFrame) -> pd.DataFrame:
+        return df.rank(pct=True, axis=1, method="average")
+
+    def xszscore(df: pd.DataFrame) -> pd.DataFrame:
+        return (df - df.mean(axis=1).values[:, None]) / df.std(axis=1).values[:, None]
+
+    def compute_ta_indicators(prices, high, low, volumes) -> Dict[str, pd.DataFrame]:
         """
         Computes various TA indicators from the `ta` package in a flexible way.
 
         Returns
         -------
         indicators : dict[str, pd.DataFrame]
-            Dictionary of indicator name -> DataFrame with shape (dates x tickers)
+            Dictionary of indicator name -> DataFrame with shape (dates x tickers).
         """
 
         indicator_specs = [
@@ -241,7 +264,7 @@ def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
         ]
 
         indicators = {}
-        for spec in tqdm(indicator_specs, "Computing TA indicators:"):
+        for spec in tqdm(indicator_specs, "Computing TA indicators"):
             df = pd.DataFrame(index=prices.index, columns=prices.columns)
             for ticker in prices.columns:
                 # Gather input series
@@ -258,13 +281,18 @@ def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
                     indicator = spec["class"](**inputs)
                     df[ticker] = getattr(indicator, spec["method"])()
                 except Exception as e:
-                    print(f"Failed to compute {spec['name']} for {ticker}: {e}")
+                    logger.warning(
+                        f"Failed to compute {spec['name']} for {ticker}: {e}"
+                    )
                     df[ticker] = np.nan
             indicators[spec["name"]] = df
 
         return indicators
 
+    ta_indicators = compute_ta_indicators(prices, high, low, volumes)
+
     # Combine all features
+    logger.info("Combining all features.")
     features = {
         "log_prices": log_prices,
         "returns_20d": returns_20d,
@@ -290,14 +318,26 @@ def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
         "momentum_20_5d": momentum_20_5d,
         "mom_persistence_20d": mom_persistence,
         "volume_surge": volume_surge,
+        "return_skew_20d": return_skew_20d,
+        "return_skew_60d": return_skew_60d,
+        "volume_skew_20d": volume_skew_20d,
+        "cs_rank_mom10d": xsrank(momentum_10d),
+        "cs_rank_mom20d": xsrank(momentum_20d),
+        "cs_rank_price_percentile": xsrank(price_percentile),
+        "cs_rank_volume_surge": xsrank(volume_surge),
+        "cs_rank_vol_adj_momentum": xsrank(vol_adj_momentum),
+        "cs_z_volatility": xszscore(volatility_20d),
+        "cs_z_beta": xszscore(beta_20d),
+        "cs_z_corr_spy": xszscore(corr_spy_20d),
+        "cs_z_rsi": xszscore(ta_indicators["rsi"]),
+        "cs_z_obv": xszscore(ta_indicators["obv"]),
     }
 
-    ta_indicators = compute_ta_indicators(prices, high, low, volumes)
-
-    # Then add to your `features` dictionary
+    # Add TA indicators to features
     features.update(ta_indicators)
 
     # Build final feature matrix
+    logger.info("Building final feature matrix.")
     X_rows = []
     for date, ticker in tqdm(signal_dates, desc="Building X"):
         row = {"date": date, "ticker": ticker}
@@ -316,89 +356,90 @@ def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
 
     X = pd.DataFrame(X_rows).set_index(["date", "ticker"]).dropna()
 
-    # Correlation prunning
+    # Correlation pruning
+    logger.info("Pruning highly correlated features.")
     corr_matrix = X.corr().abs()
     upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
     to_drop = [col for col in upper.columns if any(upper[col] > 0.95)]
+
     # Dropping bad features
     to_drop.append("is_month_start")
     to_drop.append("is_month_end")
     X = X.drop(columns=to_drop)
+    logger.info(f"Features dropped due to high correlation: {to_drop}")
 
     Y = Y.stack().dropna().astype(int)
     X = X.reindex(Y.index).dropna()
     Y = Y.loc[X.index]
 
+    logger.info("Feature generation completed successfully.")
     return X, Y, label_times
 
 
+def build_meta_features(
+    X_base: pd.DataFrame,
+    base_model_lgbm,
+    base_model_mlp,
+    scale: bool = True,
+) -> pd.DataFrame:
+    """
+    Build meta features by augmenting original features with:
+    - LGBM predicted probabilities
+    - MLP predicted probabilities
+    - LGBM predicted class
+    - MLP predicted class
+
+    Args:
+        X_base (pd.DataFrame): Input features to apply base models on.
+        base_model_lgbm: Calibrated LightGBM model (must have .predict_proba and .predict).
+        base_model_mlp: KerasSoftmaxWrapper for MLP model.
+        scale (bool): Whether to standard scale the result.
+
+    Returns:
+        pd.DataFrame: Augmented meta feature set.
+    """
+
+    # LGBM Probabilities
+    P_lgbm = pd.DataFrame(
+        base_model_lgbm.predict_proba(X_base),
+        index=X_base.index,
+        columns=[f"proba_clf_{cls}" for cls in base_model_lgbm.classes_],
+    )
+
+    # MLP Probabilities
+    P_mlp = pd.DataFrame(
+        base_model_mlp.predict_proba(X_base),
+        index=X_base.index,
+        columns=[f"proba_mlp_{cls}" for cls in base_model_mlp.class_labels_],
+    )
+
+    # Predicted classes
+    Pred_lgbm = pd.DataFrame(
+        base_model_lgbm.predict(X_base), index=X_base.index, columns=["clf_pred"]
+    )
+
+    Pred_mlp = pd.DataFrame(
+        base_model_mlp.predict(X_base), index=X_base.index, columns=["mlp_pred"]
+    )
+
+    # Concatenate original features and meta-features
+    X_meta = pd.concat([X_base, P_lgbm, P_mlp, Pred_lgbm, Pred_mlp], axis=1)
+
+    if scale:
+        X_meta = scale_features(X_meta)
+
+    return X_meta
+
+
 def main():
+    logger.info("Starting main feature generation pipeline.")
     X, Y, label_times = build_features()
     X.to_parquet(config.X)
     Y.to_frame().to_parquet(config.Y)
     logger.info(f"Saved features to {config.X}")
     logger.info(f"Saved labels to {config.Y}")
+    logger.info("Feature generation pipeline completed.")
 
 
 if __name__ == "__main__":
     main()
-
-
-
-def build_meta_features(
-        X_base: pd.DataFrame,
-        base_model_lgbm,
-        base_model_mlp,
-        scale: bool = True,
-    ) -> pd.DataFrame:
-        """
-        Build meta features by augmenting original features with:
-        - LGBM predicted probabilities
-        - MLP predicted probabilities
-        - LGBM predicted class
-        - MLP predicted class
-
-        Args:
-            X_base (pd.DataFrame): Input features to apply base models on.
-            base_model_lgbm: Calibrated LightGBM model (must have .predict_proba and .predict).
-            base_model_mlp: KerasSoftmaxWrapper for MLP model.
-            scale (bool): Whether to standard scale the result.
-
-        Returns:
-            pd.DataFrame: Augmented meta feature set.
-        """
-
-        # LGBM Probabilities
-        P_lgbm = pd.DataFrame(
-            base_model_lgbm.predict_proba(X_base),
-            index=X_base.index,
-            columns=[f"proba_clf_{cls}" for cls in base_model_lgbm.classes_]
-        )
-
-        # MLP Probabilities
-        P_mlp = pd.DataFrame(
-            base_model_mlp.predict_proba(X_base),
-            index=X_base.index,
-            columns=[f"proba_mlp_{cls}" for cls in base_model_mlp.class_labels_]
-        )
-
-        # Predicted classes
-        Pred_lgbm = pd.DataFrame(
-            base_model_lgbm.predict(X_base),
-            index=X_base.index,
-            columns=["clf_pred"]
-        )
-
-        Pred_mlp = pd.DataFrame(
-            base_model_mlp.predict(X_base),
-            index=X_base.index,
-            columns=["mlp_pred"]
-        )
-
-        # Concatenate original features and meta-features
-        X_meta = pd.concat([X_base, P_lgbm, P_mlp, Pred_lgbm, Pred_mlp], axis=1)
-
-        if scale:
-            X_meta = scale_features(X_meta)
-
-        return X_meta

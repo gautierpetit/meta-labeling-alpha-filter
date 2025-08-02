@@ -1,6 +1,5 @@
 # config.py
 from pathlib import Path
-
 from scipy.stats import loguniform, randint, uniform
 from skopt.space import Categorical, Integer, Real
 
@@ -22,9 +21,8 @@ for path in [DATA_DIR, FIGURES_DIR, MODELS_DIR, RESULTS_DIR, SHAP_VALUES_DIR]:
     path.mkdir(parents=True, exist_ok=True)
 
 # === DATA SETTINGS ===
-DATA_START_DATE = "2015-01-01"
+DATA_START_DATE = "2010-01-01"
 DATA_END_DATE = "2025-01-01"
-
 
 SNP500_HISTORY_CSV = (
     DATA_DIR / "S&P 500 Historical Components & Changes(03-10-2025).csv"
@@ -42,8 +40,6 @@ X = DATA_DIR / "X.parquet"
 Y = DATA_DIR / "Y.parquet"
 
 # === MODELING SETTINGS ===
-LONG_ONLY = False
-INVERT_SIGNALS = True
 TOP_QUANTILE = 0.9
 BOTTOM_QUANTILE = 0.1
 PT_SL_FACTOR = (
@@ -52,6 +48,22 @@ PT_SL_FACTOR = (
 )  # low:3,3;high:6,6, bestyet:5,5;4,3  negloss 1500%cumul, 0.9SR, logloss
 MAX_HOLDING_PERIOD = 20
 
+# === META MODEL SETTINGS ===
+FOLD1_START = "2010-01-01"  # '2011-02-28'
+FOLD1_END = "2016-12-31"
+
+FOLD2_START = "2017-01-01"
+FOLD2_END = "2019-12-31"
+
+FOLD3_START = "2020-01-01"
+FOLD3_END = "2024-12-31"
+
+CV_N_SPLITS = 3  # 5
+RANDOM_SEARCH_ITER = 50  # 50
+CV_SCORING = "neg_log_loss"  # "f1_weighted", "accuracy", "neg_log_loss"
+
+
+LABEL_MAP = {-1: 0, 0: 1, 1: 2}
 
 # === HYPERPARAMETER SEARCH SPACE ===
 HYPERPARAM_RANDOM = {
@@ -70,70 +82,51 @@ HYPERPARAM_RANDOM = {
 }
 
 HYPERPARAM_BAYESIAN = {
-    "n_estimators": Integer(300, 2000),
-    "learning_rate": Real(0.001, 0.2, prior="log-uniform"),
-    "num_leaves": Integer(20, 200),
-    "max_depth": Integer(3, 30),
-    "min_child_samples": Integer(10, 100),
-    "subsample": Real(0.6, 1.0),
-    "colsample_bytree": Real(0.5, 1.0),
-    "reg_alpha": Real(1e-4, 10.0, prior="log-uniform"),
-    "reg_lambda": Real(1e-4, 10.0, prior="log-uniform"),
-    "scale_pos_weight": Real(0.5, 2.0),
-    "min_split_gain": Real(1e-5, 1.0, prior="log-uniform"),
-    "bagging_freq": Integer(0, 10),
+    "n_estimators": Integer(400, 900),
+    "learning_rate": Real(0.002, 0.01, prior="log-uniform"),
+    "num_leaves": Integer(15, 40),
+    "max_depth": Integer(20, 40),  # or fix to -1 (unlimited)
+    "min_child_samples": Integer(40, 70),
+    "subsample": Real(0.9, 1.0),
+    "colsample_bytree": Real(0.8, 1.0),
+    "reg_alpha": Real(5.0, 10.0),  # it wants heavy regularization
+    "reg_lambda": Real(0.1, 1.0),
+    "scale_pos_weight": Real(0.9, 1.2),
+    "min_split_gain": Real(1e-5, 1e-2, prior="log-uniform"),
+    "bagging_freq": Integer(5, 10),
 }
-
-
-LABEL_MAP = {-1: 0, 0: 1, 1: 2}
 
 NN_HP_SPACE = {
-    "units1": [64, 128, 256],
-    "units2": [64, 128],
-    "units3": [64],
-    "l2_reg": [1e-6, 1e-5],
-    "activation": ["relu"],
-    "n_hidden":{"min_value":2, "max_value":3, "step":1},
-    "dropout": {"min_value": 0.0, "max_value": 0.2, "step": 0.05},
-    "learning_rate": {"min_value": 1e-7, "max_value": 1e-3, "sampling": "log"},
+    "units1": [256, 512, 1024],
+    "units2": [128, 256, 512],
+    "units3": [64, 128, 256],
+    "units4": [32, 64, 128],
+    "n_hidden": {"min_value": 3, "max_value": 4, "step": 1},
+    "dropout": {"min_value": 0.0, "max_value": 0.3, "step": 0.05},
+    "l2_reg": [1e-5, 1e-4],
+    "activation": ["relu", "gelu"],
+    "learning_rate": {"min_value": 1e-6, "max_value": 5e-3, "sampling": "log"},
 }
-
-
-
 
 NN_TRAINING_PARAMS = {
     "epochs": 200,
-    "batch_size": 64, #64 better but slower
-    "max_trials":75, #50
+    "batch_size": 8192,
+    "max_trials": 100,  # 50
     "early_stopping_patience": 15,
     "early_stopping_min_delta": 1e-4,
 }
 
-# === META MODEL SETTINGS ===
-# For stacking ensemble splits
-FOLD1_START = "2016-02-29"
-FOLD1_END   = "2020-12-31"
 
-FOLD2_START = "2021-01-01"
-FOLD2_END   = "2022-12-31"
+# === BACKTESTING SETTINGS ===
 
-FOLD3_START = "2023-01-01"
-FOLD3_END   = "2024-12-31"
-
-
-CV_N_SPLITS = 3  # 5
-
-RANDOM_SEARCH_ITER = 50  # 50
-CV_SCORING = "neg_log_loss"  # "f1_weighted", "accuracy", "neg_log_loss"
-
-
-META_PROBA_THRESHOLD = 0.45 # 0.45
-
-
-# === BACKTESTING ===
-BACKTEST_START_DATE = "2021-01-01"
 LONG_SIDE_TC = 0.001  # 10 bps
 SHORT_SIDE_TC = 0.001  # 20 bps
+LONG_ONLY = True
+INVERT_SIGNALS = True
+TARGET_VOL = 0.2
+VOL_SPAN = 20
+MAX_LEVERAGE = 4.0
+META_PROBA_THRESHOLD = 0.45  # 0.45
 
 # === OUTPUT FILES ===
 MISSING_DATA_REPORT = DATA_DIR / "missing_count.xlsx"
@@ -145,5 +138,4 @@ MLPV1T = MODELS_DIR / "mlpv1t.pkl"
 MLPV1 = MODELS_DIR / "mlpv1.pkl"
 MLPV2T = MODELS_DIR / "mlpv2t.pkl"
 MLPV2 = MODELS_DIR / "mlpv2.pkl"
-
 CV_MODELS = MODELS_DIR / "cv_models.pkl"

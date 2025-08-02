@@ -1,9 +1,8 @@
 import logging
-from typing import Literal
+from typing import Literal, Tuple
 
 import joblib
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.base import BaseEstimator
@@ -22,15 +21,15 @@ from skopt import BayesSearchCV
 
 import config
 from config import (
-    FOLD1_START, FOLD1_END,
-    FOLD2_START, FOLD2_END,
-    FOLD3_START, FOLD3_END
+    FOLD1_END,
+    FOLD1_START,
+    FOLD2_END,
+    FOLD2_START,
+    FOLD3_END,
+    FOLD3_START,
 )
-from data_loader import load_features, load_labels
 
 logger = logging.getLogger(__name__)
-
-
 
 
 def scale_features(X: pd.DataFrame) -> pd.DataFrame:
@@ -48,12 +47,18 @@ def scale_features(X: pd.DataFrame) -> pd.DataFrame:
     return X_scaled
 
 
-
 def split_train_test(
     X: pd.DataFrame, Y: pd.Series
-) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
+) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
     """
     Split feature matrix and labels into 3 folds using config-defined date ranges.
+
+    Args:
+        X (pd.DataFrame): Feature matrix.
+        Y (pd.Series): Labels.
+
+    Returns:
+        Tuple: Feature and label splits for 3 folds.
     """
     X_fold1 = X.loc[FOLD1_START:FOLD1_END]
     Y_fold1 = Y.loc[FOLD1_START:FOLD1_END]
@@ -65,7 +70,6 @@ def split_train_test(
     Y_fold3 = Y.loc[FOLD3_START:FOLD3_END]
 
     return X_fold1, X_fold2, X_fold3, Y_fold1, Y_fold2, Y_fold3
-
 
 
 def train_meta_model(
@@ -84,13 +88,14 @@ def train_meta_model(
     Returns:
         BaseEstimator: The best estimator found by the search strategy.
     """
+    logger.info(f"Training meta model with {estimation} search...")
+
     lgbm = LGBMClassifier(
         device_type="gpu",
         gpu_platform_id=0,
         gpu_device_id=0,
         objective="multiclass",
         random_state=config.RANDOM_STATE,
-        # class_weight="balanced",
         n_jobs=config.N_JOBS,
     )
 
@@ -121,10 +126,7 @@ def train_meta_model(
     else:
         raise ValueError("Invalid estimation method. Choose 'Random' or 'Bayesian'.")
 
-    search.fit(
-        X,
-        Y,
-    )
+    search.fit(X, Y)
 
     best_model = search.best_estimator_
     logger.info(f"Best estimator: {best_model}")
@@ -135,7 +137,10 @@ def train_meta_model(
 
 
 def calibrate_model(
-    clf: BaseEstimator, X: pd.DataFrame, Y: pd.Series, method:Literal["sigmoid","isotonic"]="sigmoid"
+    clf: BaseEstimator,
+    X: pd.DataFrame,
+    Y: pd.Series,
+    method: Literal["sigmoid", "isotonic"] = "sigmoid",
 ) -> CalibratedClassifierCV:
     """
     Calibrate classifier probabilities using sigmoid calibration.
@@ -152,15 +157,18 @@ def calibrate_model(
         estimator=clf,
         method=method,
         cv=TimeSeriesSplit(n_splits=config.CV_N_SPLITS, gap=config.MAX_HOLDING_PERIOD),
-        
     )
     calibrated_clf.fit(X, Y)
 
     joblib.dump(calibrated_clf, config.CLF_CAL_PATH)
     return calibrated_clf
 
+
 def evaluate_model(
-    clf: BaseEstimator, X_test: pd.DataFrame, Y_test: pd.Series, name: str = "Test Model"
+    clf: BaseEstimator,
+    X_test: pd.DataFrame,
+    Y_test: pd.Series,
+    name: str = "Test Model",
 ) -> tuple[float, float, float]:
     """
     Evaluate multiclass classifier on test data with label remapping for consistency.
@@ -173,12 +181,14 @@ def evaluate_model(
     Returns:
         Tuple: (Accuracy, ROC AUC [macro], Log Loss)
     """
-    
+
     y_true = Y_test.map(config.LABEL_MAP).values
 
     # Predict
     y_pred = clf.predict(X_test)
-    y_pred = pd.Series(y_pred).map(config.LABEL_MAP).values  # remap predictions if needed
+    y_pred = (
+        pd.Series(y_pred).map(config.LABEL_MAP).values
+    )  # remap predictions if needed
 
     y_proba = clf.predict_proba(X_test)
 
@@ -208,39 +218,28 @@ def evaluate_model(
         )
 
         plt.figure(figsize=(6, 6))
-        plt.plot(prob_pred, prob_true, marker="o", label=f"Class {class_label} ({['-1','0','1'][class_idx]})")
+        plt.plot(
+            prob_pred,
+            prob_true,
+            marker="o",
+            label=f"Class {class_label} ({['-1', '0', '1'][class_idx]})",
+        )
         plt.plot([0, 1], [0, 1], linestyle="--", color="gray")
-        plt.title(f"Calibration Curve {name} – Class {['-1','0','1'][class_idx]}")
+        plt.title(f"Calibration Curve {name} – Class {['-1', '0', '1'][class_idx]}")
         plt.xlabel("Predicted Probability")
         plt.ylabel("True Proportion")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig(config.FIGURES_DIR / f"calibration_curve_{name}_class_{['-1','0','1'][class_idx]}.png")
+        plt.savefig(
+            config.FIGURES_DIR
+            / f"calibration_curve_{name}_class_{['-1', '0', '1'][class_idx]}.png"
+        )
         plt.close()
 
         print(
-            f"Label {['-1','0','1'][class_idx]} | Mean predicted prob: {y_proba[:, class_idx].mean():.4f}"
+            f"Label {['-1', '0', '1'][class_idx]} | Mean predicted prob: {y_proba[:, class_idx].mean():.4f}"
         )
         print(f"Actual proportion in Y_test: {(y_true == class_label).mean():.4f}")
 
     return acc, auc, logloss
-
-
-
-def main():
-    logging.info("=== 4. Load and prepare meta-modeling data ===")
-    X = load_features()
-    Y = load_labels().squeeze()
-    X_train, Y_train, X_test, Y_test = split_train_test(X, Y)
-    logging.info("=== 5. Train and calibrate model ===")
-    clf = train_meta_model(X_train, Y_train, "Bayesian")
-    calibrated_clf = calibrate_model(clf, X_train, Y_train)
-    acc, auc, logloss = evaluate_model(calibrated_clf, X_test, Y_test)
-    logger.info(f"Test Accuracy: {acc:.4f}")
-    logger.info(f"Test ROC AUC: {auc:.4f}")
-    logger.info(f"Test Log loss: {logloss:.4f}")
-
-
-if __name__ == "__main__":
-    main()

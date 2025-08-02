@@ -1,19 +1,18 @@
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from data_loader import load_returns
-import config
 from sklearn.linear_model import LinearRegression
+
+import config
+from data_loader import load_returns
 
 logger = logging.getLogger(__name__)
 
 
-
-
-def compute_drawdown(returns: pd.Series) -> tuple[pd.Series, int]:
+def compute_drawdown(returns: pd.Series) -> Tuple[pd.Series, int]:
     """
     Compute the drawdown and maximum drawdown duration for a series of returns.
 
@@ -24,7 +23,7 @@ def compute_drawdown(returns: pd.Series) -> tuple[pd.Series, int]:
 
     Returns
     -------
-    tuple[pd.Series, int]
+    Tuple[pd.Series, int]
         - Drawdown series as a percentage.
         - Maximum drawdown duration in days.
     """
@@ -45,11 +44,11 @@ def compute_drawdown(returns: pd.Series) -> tuple[pd.Series, int]:
 def plot_drawdown_underwater(
     returns: pd.Series,
     bench_returns: Optional[pd.Series] = None,
-    label: tuple = ("Strategy", "Benchmark"),
-    figsize: tuple = (12, 4),
+    label: Tuple[str, str] = ("Strategy", "Benchmark"),
+    figsize: Tuple[int, int] = (12, 4),
     fixed_scale: bool = False,
     save: bool = True,
-    file: str = "drawdown_underwater.png"
+    file: str = "drawdown_underwater.png",
 ) -> None:
     """
     Plot drawdown under water graph for strategy and optional benchmark.
@@ -60,16 +59,16 @@ def plot_drawdown_underwater(
         Strategy periodic returns (indexed by datetime).
     bench_returns : Optional[pd.Series], optional
         Benchmark returns, by default None.
-    label : tuple, optional
+    label : Tuple[str, str], optional
         Labels for the legend (strategy, benchmark), by default ("Strategy", "Benchmark").
-    figsize : tuple, optional
+    figsize : Tuple[int, int], optional
         Matplotlib figure size, by default (12, 4).
     fixed_scale : bool, optional
         Whether to fix y-axis to [-100, 0], by default False.
     save : bool, optional
         Whether to save the plot, by default True.
     file : str, optional
-        Filename for saving the plot (requires config.RESULTS_DIR), by default "drawdown_underwater.png".
+        Filename for saving the plot, by default "drawdown_underwater.png".
 
     Returns
     -------
@@ -81,30 +80,42 @@ def plot_drawdown_underwater(
     strategy_dd, strategy_dd_duration = compute_drawdown(returns)
 
     plt.figure(figsize=figsize)
-    plt.plot(strategy_dd * 100, label=f"{label[0]} Drawdown", color='steelblue')
-    plt.fill_between(strategy_dd.index, strategy_dd * 100, 0, color='steelblue', alpha=0.3)
+    plt.plot(strategy_dd * 100, label=f"{label[0]} Drawdown", color="steelblue")
+    plt.fill_between(
+        strategy_dd.index, strategy_dd * 100, 0, color="steelblue", alpha=0.3
+    )
 
     if bench_returns is not None:
-        benchmark_dd, benchmark_dd_duration = compute_drawdown(bench_returns.loc[returns.index[0]:])
-        plt.plot(benchmark_dd * 100, label=f"{label[1]} Drawdown", color='darkorange', linestyle='--')
+        benchmark_dd, benchmark_dd_duration = compute_drawdown(
+            bench_returns.loc[returns.index[0] :]
+        )
+        plt.plot(
+            benchmark_dd * 100,
+            label=f"{label[1]} Drawdown",
+            color="darkorange",
+            linestyle="--",
+        )
 
     plt.title("Drawdown Under Water")
     plt.ylabel("Drawdown (%)")
     plt.xlabel("Date")
     if fixed_scale:
         plt.ylim([-100, 0])
-    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.grid(True, linestyle="--", alpha=0.5)
     plt.legend()
     plt.gca().text(
-        0.01, 0.35,
+        0.01,
+        0.35,
         f"Max DD: {strategy_dd.min():.2%}\n"
         f"Avg DD: {strategy_dd.mean():.2%}\n"
         f"Max Duration: {strategy_dd_duration} days",
         transform=plt.gca().transAxes,
         fontsize=10,
-        verticalalignment='top',
-        horizontalalignment='left',
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="white", edgecolor="gray", alpha=0.7)
+        verticalalignment="top",
+        horizontalalignment="left",
+        bbox=dict(
+            boxstyle="round,pad=0.4", facecolor="white", edgecolor="gray", alpha=0.7
+        ),
     )
 
     plt.tight_layout()
@@ -116,27 +127,43 @@ def plot_drawdown_underwater(
 
     plt.close()
 
+
 def plot_cumulative_returns(
     strategy: pd.Series,
     strategy_costs: pd.Series,
     spy: pd.Series,
     mom: pd.Series,
+    start: str,
     name: str = "Strategy",
-    start: str = config.BACKTEST_START_DATE,
     save: bool = True,
-    file: str = "cumulative_returns.png"
+    file: str = "cumulative_returns.png",
 ) -> None:
     """
     Plots cumulative returns of the strategy vs SPY and a standard momentum benchmark.
 
-    Parameters:
-    - strategy: Raw strategy returns (no costs).
-    - strategy_costs: Strategy returns with transaction costs.
-    - spy: SPY benchmark returns.
-    - mom: Momentum benchmark returns.
-    - name: Label for the strategy.
-    - start: Start date for plotting.
-    - save: If True, saves the plot to disk.
+    Parameters
+    ----------
+    strategy : pd.Series
+        Raw strategy returns (no costs).
+    strategy_costs : pd.Series
+        Strategy returns with transaction costs.
+    spy : pd.Series
+        SPY benchmark returns.
+    mom : pd.Series
+        Momentum benchmark returns.
+    start : str, optional
+        Start date for plotting.
+    name : str, optional
+        Label for the strategy, by default "Strategy".
+
+    save : bool, optional
+        Whether to save the plot, by default True.
+    file : str, optional
+        Filename for saving the plot, by default "cumulative_returns.png".
+
+    Returns
+    -------
+    None
     """
     # Compute cumulative returns
     cumulative = (1 + strategy.fillna(0)).cumprod()
@@ -145,17 +172,25 @@ def plot_cumulative_returns(
     mom_cumulative = (1 + mom.fillna(0)).cumprod()
 
     plt.figure(figsize=(12, 6))
-    plt.plot(cumulative.loc[start:], label=f"{name}, Cumulative: {cumulative.loc[start:].iloc[-1]:.2f}", color='steelblue')
-    plt.plot(cumulative_costs.loc[start:], label=f"{name} net, Cumulative: {cumulative_costs.loc[start:].iloc[-1]:.2f}", color='grey')
+    plt.plot(
+        cumulative.loc[start:],
+        label=f"{name}, Cumulative: {cumulative.loc[start:].iloc[-1]:.2f}",
+        color="steelblue",
+    )
+    plt.plot(
+        cumulative_costs.loc[start:],
+        label=f"{name} net, Cumulative: {cumulative_costs.loc[start:].iloc[-1]:.2f}",
+        color="grey",
+    )
     plt.plot(
         spy_cumulative.loc[start:] / spy_cumulative.loc[start:].iloc[0],
         label=f"SPY, Cumulative: {spy_cumulative.loc[start:].iloc[-1]:.2f}",
-        color="black"
+        color="black",
     )
     plt.plot(
         mom_cumulative.loc[start:] / mom_cumulative.loc[start:].iloc[0],
         label=f"Momentum, Cumulative: {mom_cumulative.loc[start:].iloc[-1]:.2f}",
-        color="darkorange"
+        color="darkorange",
     )
     plt.suptitle(f"Cumulative Returns: {name} vs Benchmarks")
     plt.xlabel("Date")
@@ -169,25 +204,46 @@ def plot_cumulative_returns(
         logger.info(f"Cumulative returns plot saved to: {filename}")
     plt.close()
 
+
 def plot_turnover(
     turnover: pd.Series,
     name: str = "Strategy",
     window: int = 5,
     save: bool = True,
-    file: str = "avg_turnover.png"
+    file: str = "avg_turnover.png",
 ) -> None:
     """
     Plots rolling average turnover.
 
-    Parameters:
-    - turnover: Daily turnover values.
-    - name: Strategy name for title/filename.
-    - window: Rolling window (default 20).
-    - save: If True, saves the plot to disk.
+    Parameters
+    ----------
+    turnover : pd.Series
+        Daily turnover values.
+    name : str, optional
+        Strategy name for title/filename, by default "Strategy".
+    window : int, optional
+        Rolling window size, by default 5.
+    save : bool, optional
+        Whether to save the plot, by default True.
+    file : str, optional
+        Filename for saving the plot, by default "avg_turnover.png".
+
+    Returns
+    -------
+    None
     """
     plt.figure(figsize=(12, 6))
-    plt.plot(turnover.rolling(window).mean(), label=f"{window}-day avg turnover, Max: {turnover.max():.2f}")
-    plt.axhline(turnover.mean(), color="steelblue", linestyle="--", alpha=0.7, label=f"Average Turnover: {turnover.mean():.2f}")
+    plt.plot(
+        turnover.rolling(window).mean(),
+        label=f"{window}-day avg turnover, Max: {turnover.max():.2f}",
+    )
+    plt.axhline(
+        turnover.mean(),
+        color="steelblue",
+        linestyle="--",
+        alpha=0.7,
+        label=f"Average Turnover: {turnover.mean():.2f}",
+    )
     plt.suptitle(f"Turnover Trend: {name}")
     plt.title(f"Total turnover: {turnover.sum():.2f}")
     plt.xlabel("Date")
@@ -202,14 +258,16 @@ def plot_turnover(
     plt.close()
 
 
-def plot_rolling_correlation(strategy_returns: pd.Series,
-                              spy_returns: pd.Series,
-                              mom_returns: pd.Series,
-                              window: int = 20,
-                              name: str = "Strategy",
-                              figsize: tuple = (12, 4),
-                              save: bool = True,
-                              file: str = "rolling_corr.png") -> None:
+def plot_rolling_correlation(
+    strategy_returns: pd.Series,
+    spy_returns: pd.Series,
+    mom_returns: pd.Series,
+    window: int = 20,
+    name: str = "Strategy",
+    figsize: Tuple[int, int] = (12, 4),
+    save: bool = True,
+    file: str = "rolling_corr.png",
+) -> None:
     """
     Plot rolling correlation between strategy returns and benchmark returns.
 
@@ -233,27 +291,42 @@ def plot_rolling_correlation(strategy_returns: pd.Series,
         Filename for saving.
     """
 
-
-    strategy_corr_rolling = strategy_returns.rolling(window).corr(
-        spy_returns
-    )
-    mom_corr_rolling = mom_returns.rolling(window).corr(
-        spy_returns
-    )
+    strategy_corr_rolling = strategy_returns.rolling(window).corr(spy_returns)
+    mom_corr_rolling = mom_returns.rolling(window).corr(spy_returns)
 
     strategy_corr = strategy_returns.corr(spy_returns)
     mom_corr = mom_returns.corr(spy_returns)
 
     plt.figure(figsize=figsize)
-    plt.plot(strategy_corr_rolling, label=f"{name}, Std Dev: {strategy_corr_rolling.std():.2f}", color='steelblue')
-    plt.plot(mom_corr_rolling, label=f"Momentum, Std Dev: {mom_corr_rolling.std():.2f}", color='darkorange')
-    plt.axhline(strategy_corr, color='steelblue', linestyle='--', label=f"Overall Correlation: {strategy_corr:.2f}", alpha=0.6)
-    plt.axhline(mom_corr, color='darkorange', linestyle='--', label=f"Overall Correlation: {mom_corr:.2f}", alpha=0.6)
+    plt.plot(
+        strategy_corr_rolling,
+        label=f"{name}, Std Dev: {strategy_corr_rolling.std():.2f}",
+        color="steelblue",
+    )
+    plt.plot(
+        mom_corr_rolling,
+        label=f"Momentum, Std Dev: {mom_corr_rolling.std():.2f}",
+        color="darkorange",
+    )
+    plt.axhline(
+        strategy_corr,
+        color="steelblue",
+        linestyle="--",
+        label=f"Overall Correlation: {strategy_corr:.2f}",
+        alpha=0.6,
+    )
+    plt.axhline(
+        mom_corr,
+        color="darkorange",
+        linestyle="--",
+        label=f"Overall Correlation: {mom_corr:.2f}",
+        alpha=0.6,
+    )
     plt.title(f"{window}-Day Rolling Correlation to SPY")
     plt.ylabel("Correlation")
     plt.xlabel("Date")
-    plt.ylim([-1,1])
-    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.ylim([-1, 1])
+    plt.grid(True, linestyle="--", alpha=0.5)
     plt.legend()
     plt.tight_layout()
 
@@ -263,43 +336,85 @@ def plot_rolling_correlation(strategy_returns: pd.Series,
         logger.info(f"Correlation plot saved to: {filename}")
     plt.close()
 
-def plot_leverage(weights_df: pd.DataFrame,
-                name: str = "Strategy",
-                figsize: tuple = (12, 4),
-                save: bool = True,
-                file: str = "daily_leverage.png") -> None:
+
+def plot_leverage(
+    weights_df: pd.DataFrame,
+    name: str = "Strategy",
+    figsize: Tuple[int, int] = (12, 4),
+    save: bool = True,
+    file: str = "daily_leverage.png",
+) -> None:
     """
     Plot daily leverage (sum of absolute weights).
+
+    Parameters
+    ----------
+    weights_df : pd.DataFrame
+        DataFrame with asset weights over time.
+    name : str, optional
+        Strategy name for title, by default "Strategy".
+    figsize : Tuple[int, int], optional
+        Figure size, by default (12, 4).
+    save : bool, optional
+        Whether to save the plot, by default True.
+    file : str, optional
+        Filename for saving the plot, by default "daily_leverage.png".
+
+    Returns
+    -------
+    None
     """
     daily_leverage = weights_df.abs().sum(axis=1)
     net_exposure = weights_df.sum(axis=1)
     plt.figure(figsize=figsize)
-    plt.plot(daily_leverage, label=f"Daily Leverage (Gross): Max {daily_leverage.max():.2f}",color='steelblue')
-    plt.plot(net_exposure, label=f"Daily Net Exposure: Max {net_exposure.max():.2f}",color='grey')
-    plt.axhline(daily_leverage.mean(), color="steelblue", linestyle="--", alpha=0.7, label=f"Average Leverage: {daily_leverage.mean():.2f}")
-    plt.axhline(net_exposure.mean(), color="grey", linestyle="--", alpha=0.7, label=f"Average Net Exposure: {net_exposure.mean():.2f}")
+    plt.plot(
+        daily_leverage,
+        label=f"Daily Leverage (Gross): Max {daily_leverage.max():.2f}",
+        color="steelblue",
+    )
+    plt.plot(
+        net_exposure,
+        label=f"Daily Net Exposure: Max {net_exposure.max():.2f}",
+        color="grey",
+    )
+    plt.axhline(
+        daily_leverage.mean(),
+        color="steelblue",
+        linestyle="--",
+        alpha=0.7,
+        label=f"Average Leverage: {daily_leverage.mean():.2f}",
+    )
+    plt.axhline(
+        net_exposure.mean(),
+        color="grey",
+        linestyle="--",
+        alpha=0.7,
+        label=f"Average Net Exposure: {net_exposure.mean():.2f}",
+    )
     plt.title("Daily Leverage: " + name)
     plt.ylabel("Leverage")
     plt.xlabel("Date")
-    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.grid(True, linestyle="--", alpha=0.5)
     plt.legend()
-    
+
     plt.tight_layout()
     if save:
         filename = config.RESULTS_DIR / file
         plt.savefig(filename)
         logger.info(f"Leverage plot saved to: {filename}")
     plt.close()
-    
 
-def plot_rolling_sharpe(strategy_returns: pd.Series,
-                        mom_returns: pd.Series,
-                        window: int = 60,
-                        name: str = "Strategy",
-                        figsize: tuple = (12, 4),
-                        save: bool = True,
-                        method: str = "compound",
-                        file: str = "rolling_sharpe.png") -> None:
+
+def plot_rolling_sharpe(
+    strategy_returns: pd.Series,
+    mom_returns: pd.Series,
+    window: int = 60,
+    name: str = "Strategy",
+    figsize: Tuple[int, int] = (12, 4),
+    save: bool = True,
+    method: str = "compound",
+    file: str = "rolling_sharpe.png",
+) -> None:
     """
     Plot rolling Sharpe ratio of the strategy and a benchmark.
 
@@ -319,23 +434,38 @@ def plot_rolling_sharpe(strategy_returns: pd.Series,
         If True, saves the plot.
     file : str
         File name to save.
+
+    Returns
+    -------
+    None
     """
 
     r_sharpe = rolling_sharpe(strategy_returns, window, method=method)
     r_sharpe_mom = rolling_sharpe(mom_returns, window, method=method)
 
     plt.figure(figsize=figsize)
-    plt.plot(r_sharpe, label=f"{name}", color='steelblue')
-    plt.plot(r_sharpe_mom, label="Momentum", color='darkorange')
+    plt.plot(r_sharpe, label=f"{name}", color="steelblue")
+    plt.plot(r_sharpe_mom, label="Momentum", color="darkorange")
 
-    
-    plt.axhline(r_sharpe.mean(), color='steelblue', linestyle='--', alpha=0.7, label=f"Avg Sharpe {name}: {round(r_sharpe.mean(),2)}")
-    plt.axhline(r_sharpe_mom.mean(), color='darkorange', linestyle='--', alpha=0.7, label=f"Avg Sharpe Momentum: {round(r_sharpe_mom.mean(),2)}")
+    plt.axhline(
+        r_sharpe.mean(),
+        color="steelblue",
+        linestyle="--",
+        alpha=0.7,
+        label=f"Avg Sharpe {name}: {round(r_sharpe.mean(), 2)}",
+    )
+    plt.axhline(
+        r_sharpe_mom.mean(),
+        color="darkorange",
+        linestyle="--",
+        alpha=0.7,
+        label=f"Avg Sharpe Momentum: {round(r_sharpe_mom.mean(), 2)}",
+    )
 
     plt.title(f"{window}-Day Rolling Sharpe")
     plt.ylabel("Sharpe Ratio")
     plt.xlabel("Date")
-    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.grid(True, linestyle="--", alpha=0.5)
     plt.legend()
     plt.tight_layout()
 
@@ -347,32 +477,41 @@ def plot_rolling_sharpe(strategy_returns: pd.Series,
     plt.close()
 
 
-
-def rolling_sharpe(returns: pd.Series, window: int, method: str = "compound") -> pd.Series:
+def rolling_sharpe(
+    returns: pd.Series, window: int, method: str = "compound"
+) -> pd.Series:
     """
     Calculate rolling Sharpe ratio.
 
-    Parameters:
-    - returns: pd.Series of daily returns
-    - window: rolling window size (in days)
-    - method: 
+    Parameters
+    ----------
+    returns : pd.Series
+        Daily returns of the strategy.
+    window : int
+        Rolling window size in days.
+    method : str
         - "compound": uses compound annualized return over the window
         - "simple": uses mean return over window, annualized
 
-    Returns:
-    - pd.Series of rolling Sharpe ratios
+    Returns
+    -------
+    pd.Series
+        Rolling Sharpe ratios.
     """
     if method not in ["compound", "simple"]:
         raise ValueError("method must be 'compound' or 'simple'")
 
     if method == "compound":
+
         def compound_annual(x):
             if len(x) == 0:
                 return np.nan
             cumulative = (1 + x).prod() - 1
             return (1 + cumulative) ** (252 / len(x)) - 1
 
-        rolling_annual_return = returns.rolling(window).apply(compound_annual, raw=False)
+        rolling_annual_return = returns.rolling(window).apply(
+            compound_annual, raw=False
+        )
     else:  # simple
         daily_mean = returns.rolling(window).mean()
         rolling_annual_return = daily_mean * 252
@@ -382,9 +521,9 @@ def rolling_sharpe(returns: pd.Series, window: int, method: str = "compound") ->
     return sharpe
 
 
-def compute_pnl_per_trade(weights_df: pd.DataFrame,
-                          filtered_signals: pd.DataFrame,
-                          returns: pd.DataFrame) -> pd.Series:
+def compute_pnl_per_trade(
+    weights_df: pd.DataFrame, filtered_signals: pd.DataFrame, returns: pd.DataFrame
+) -> pd.Series:
     """
     Efficiently computes realized PnL per trade.
 
@@ -402,34 +541,50 @@ def compute_pnl_per_trade(weights_df: pd.DataFrame,
     pd.Series
         Realized PnL per trade, indexed by (date, asset).
     """
-    if not all(isinstance(df, pd.DataFrame) for df in [weights_df, filtered_signals, returns]):
+    if not all(
+        isinstance(df, pd.DataFrame) for df in [weights_df, filtered_signals, returns]
+    ):
         raise TypeError("All inputs must be pandas DataFrames.")
 
+    # Flatten the signals and weights for efficient processing
+    stacked_signals = filtered_signals.stack()
+    stacked_weights = weights_df.stack()
+    stacked_returns = returns.stack()
+
+    # Filter only the entry signals
+    entry_signals = stacked_signals[stacked_signals == 1]
+
     pnl_list = []
-    trade_keys = []  # Store (date, asset)
+    trade_keys = []
 
-    for asset in filtered_signals.columns:
-        entries = filtered_signals.index[filtered_signals[asset] == 1]
-        for entry_date in entries:
-            if entry_date not in weights_df.index:
-                continue
+    for (date, asset), _ in entry_signals.items():
+        if (date, asset) not in stacked_weights:
+            continue
 
-            weight = weights_df.at[entry_date, asset]
-            if weight == 0:
-                continue
+        weight = stacked_weights[(date, asset)]
+        if weight == 0:
+            continue
 
-            future_weights = weights_df.loc[entry_date:, asset]
-            zero_mask = (future_weights == 0)
-            exit_date = zero_mask.idxmax() if zero_mask.any() else future_weights.index[-1]
+        # Find the exit date for the trade
+        future_weights = stacked_weights.loc[(slice(date, None), asset)]
+        zero_mask = future_weights == 0
+        exit_date = (
+            zero_mask.idxmax()[0] if zero_mask.any() else future_weights.index[-1][0]
+        )
 
-            trade_weights = weights_df.loc[entry_date:exit_date, asset]
-            trade_returns = returns.loc[entry_date:exit_date, asset]
+        # Calculate PnL for the trade
+        trade_weights = stacked_weights.loc[(slice(date, exit_date), asset)]
+        trade_returns = stacked_returns.loc[(slice(date, exit_date), asset)]
 
-            trade_pnl = (trade_weights * trade_returns).sum()
-            pnl_list.append(trade_pnl)
-            trade_keys.append((entry_date, asset))
+        trade_pnl = (trade_weights * trade_returns).sum()
+        pnl_list.append(trade_pnl)
+        trade_keys.append((date, asset))
 
-    return pd.Series(pnl_list, index=pd.MultiIndex.from_tuples(trade_keys, names=["date", "asset"]), name="Trade PnL")
+    return pd.Series(
+        pnl_list,
+        index=pd.MultiIndex.from_tuples(trade_keys, names=["date", "asset"]),
+        name="Trade PnL",
+    )
 
 
 def plot_alpha_beta(
@@ -437,11 +592,11 @@ def plot_alpha_beta(
     benchmark_returns: pd.Series,
     name: str = "Strategy",
     bench_name: str = "SPY",
-    figsize: tuple = (6, 6),
+    figsize: Tuple[int, int] = (6, 6),
     save: bool = True,
     file: str = "alpha_beta_regression.png",
-    plot: bool = False
-) -> tuple[float, float]:
+    plot: bool = False,
+) -> Tuple[float, float]:
     """
     Plot strategy returns vs. benchmark with CAPM-style regression line.
 
@@ -466,11 +621,15 @@ def plot_alpha_beta(
 
     Returns
     -------
-    tuple[float, float]
+    Tuple[float, float]
         Annualized alpha and beta of the strategy relative to the benchmark.
     """
-    if not isinstance(strategy_returns, pd.Series) or not isinstance(benchmark_returns, pd.Series):
-        raise TypeError("Both 'strategy_returns' and 'benchmark_returns' must be pandas Series.")
+    if not isinstance(strategy_returns, pd.Series) or not isinstance(
+        benchmark_returns, pd.Series
+    ):
+        raise TypeError(
+            "Both 'strategy_returns' and 'benchmark_returns' must be pandas Series."
+        )
 
     df = pd.concat([strategy_returns, benchmark_returns], axis=1).dropna()
     x = df.iloc[:, 1].values.reshape(-1, 1)  # Benchmark
@@ -486,15 +645,17 @@ def plot_alpha_beta(
 
         plt.figure(figsize=figsize)
         plt.scatter(x, y, alpha=0.3, s=10, label="Daily Returns")
-        plt.plot(x_pred, y_pred, color='red', label=f"Fit: y = {beta:.2f}x + {alpha:.2f}")
-        plt.axhline(0, color='gray', linestyle='--', linewidth=1)
-        plt.axvline(0, color='gray', linestyle='--', linewidth=1)
+        plt.plot(
+            x_pred, y_pred, color="red", label=f"Fit: y = {beta:.2f}x + {alpha:.2f}"
+        )
+        plt.axhline(0, color="gray", linestyle="--", linewidth=1)
+        plt.axvline(0, color="gray", linestyle="--", linewidth=1)
 
         plt.xlabel(f"{bench_name} Daily Returns")
         plt.ylabel(f"{name} Daily Returns")
         plt.title(f"{name} vs. {bench_name} – Alpha/Beta Regression")
         plt.legend()
-        plt.grid(True, linestyle='--', alpha=0.5)
+        plt.grid(True, linestyle="--", alpha=0.5)
         plt.tight_layout()
 
         if save:
@@ -507,8 +668,6 @@ def plot_alpha_beta(
     return alpha, beta
 
 
-
-
 def summarize_performance(
     returns: pd.Series,
     bench_spy: pd.Series,
@@ -518,6 +677,31 @@ def summarize_performance(
     weights_df: Optional[pd.DataFrame] = None,
     strategy: bool = True,
 ) -> pd.Series:
+    """
+    Summarizes the performance of a trading strategy.
+
+    Parameters
+    ----------
+    returns : pd.Series
+        Daily returns of the strategy.
+    bench_spy : pd.Series
+        Daily returns of the SPY benchmark.
+    filtered_signals : Optional[pd.DataFrame], optional
+        Binary signal matrix (1s where trades occur), by default None.
+    Y : Optional[pd.Series], optional
+        Meta-labels (+1, 0, -1 or binary), by default None.
+    turnover : Optional[pd.Series], optional
+        Daily turnover values, by default None.
+    weights_df : Optional[pd.DataFrame], optional
+        Weights matrix used for execution, by default None.
+    strategy : bool, optional
+        Indicates if the summary is for a strategy (True) or a benchmark (False), by default True.
+
+    Returns
+    -------
+    pd.Series
+        A series containing various performance metrics.
+    """
     returns = returns.dropna()
     cumulative = (1 + returns).prod() - 1
     annualized_return = (1 + cumulative) ** (252 / len(returns)) - 1
@@ -533,35 +717,30 @@ def summarize_performance(
     skew = returns.skew()
     kurt = returns.kurt()
     corr = returns.corr(bench_spy)
-    #corr_std = returns.rolling(20).corr(bench_spy).std()
+    # corr_std = returns.rolling(20).corr(bench_spy).std()
     alpha, beta = plot_alpha_beta(returns, bench_spy)
     monthly_returns = returns.resample("M").sum()
 
-
-
     summary = pd.Series(
         {
-            #"Cumulative Return": f"{cumulative:.2%}",
+            # "Cumulative Return": f"{cumulative:.2%}",
             "Annualized Return": f"{annualized_return:.2%}",
             "Annualized Vol": f"{annualized_vol:.2%}",
             "Semi-volatility": f"{semi_vol:.2%}",
             "Sharpe Ratio": f"{sharpe:.2f}",
             "Sortino Ratio": f"{sortino:.2f}",
             "Conditional VaR (CVaR)": f"{cvar:.2%}",
-
             "Max Drawdown": f"{max_drawdown:.2%}",
             "Avg Drawdown": f"{avg_drawdown:.2%}",
             "Max Drawdown Duration (days)": drawdown_duration,
             "Skew": f"{skew:.3f}",
             "Kurtosis": f"{kurt:.3f}",
-
             "Correlation to SPY": f"{corr:.3f}",
             # "Std Dev Correlation": f"{corr_std:.3f}",
             "Alpha": f"{alpha:.3f}",
             "Beta": f"{beta:.3f}",
             "Positive Months": f"{(monthly_returns > 0).sum()}",
             "Negative Months": f"{(monthly_returns < 0).sum()}",
-
         }
     )
 
@@ -590,9 +769,16 @@ def summarize_performance(
         long_trades = traded_outcomes[long_mask]
         short_trades = traded_outcomes[short_mask]
 
-        long_hit_rate = (long_trades == 1).sum() / len(long_trades) if len(long_trades) > 0 else np.nan
-        short_hit_rate = (short_trades == -1).sum() / len(short_trades) if len(short_trades) > 0 else np.nan
-
+        long_hit_rate = (
+            (long_trades == 1).sum() / len(long_trades)
+            if len(long_trades) > 0
+            else np.nan
+        )
+        short_hit_rate = (
+            (short_trades == -1).sum() / len(short_trades)
+            if len(short_trades) > 0
+            else np.nan
+        )
 
         # Leverage and Exposure
         """if weights_df is not None:
@@ -623,7 +809,7 @@ def summarize_performance(
         trade_pnls = compute_pnl_per_trade(weights_df, filtered_signals, asset_returns)
 
         total_wins = (trade_pnls > 0).sum()
-        #total_losses = (trade_pnls < 0).sum()
+        # total_losses = (trade_pnls < 0).sum()
         losses_sum = -trade_pnls[trade_pnls < 0].sum()
         profit_factor = (
             trade_pnls[trade_pnls > 0].sum() / losses_sum if losses_sum > 0 else np.nan
@@ -638,28 +824,36 @@ def summarize_performance(
             else np.nan
         )
 
-        #summary["Avg Leverage (Gross)"] = round(leverage.mean(), 2)
-        #summary["Max Leverage (Gross)"] = round(leverage.max(), 2)
-        #summary["Avg Net Exposure"] = round(net_exposure.mean(), 2)
+        # summary["Avg Leverage (Gross)"] = round(leverage.mean(), 2)
+        # summary["Max Leverage (Gross)"] = round(leverage.max(), 2)
+        # summary["Avg Net Exposure"] = round(net_exposure.mean(), 2)
         summary["Trade Count"] = total
-        summary["Win Rate"] = f"{(total_wins / len(trade_pnls)):.2%}" if len(trade_pnls) > 0 else "N/A"
-        #summary["Avg Daily Turnover"] = round(turnover.mean(), 2) if turnover is not None else np.nan
-        #summary["Total Daily Turnover"] = round(turnover.sum(), 2) if turnover is not None else np.nan
+        summary["Win Rate"] = (
+            f"{(total_wins / len(trade_pnls)):.2%}" if len(trade_pnls) > 0 else "N/A"
+        )
+        # summary["Avg Daily Turnover"] = round(turnover.mean(), 2) if turnover is not None else np.nan
+        # summary["Total Daily Turnover"] = round(turnover.sum(), 2) if turnover is not None else np.nan
         summary["TP Trades"] = (traded_outcomes == 1).sum()
         summary["SL Trades"] = (traded_outcomes == -1).sum()
         summary["Timeout / No Signal"] = (traded_outcomes == 0).sum()
         summary["Avg Holding Period (days)"] = round(avg_holding_period, 2)
-        summary["Notional-Weighted Win Rate"] = f"{weighted_win_rate:.2%}" if not np.isnan(weighted_win_rate) else "N/A"
+        summary["Notional-Weighted Win Rate"] = (
+            f"{weighted_win_rate:.2%}" if not np.isnan(weighted_win_rate) else "N/A"
+        )
         summary["Avg PnL per Trade"] = f"{trade_pnls.mean():.2%}"
-        
+
         summary["Median PnL per Trade"] = f"{trade_pnls.median():.2%}"
-        summary["Profit Factor"] = f"{profit_factor:.2f}" if not np.isnan(profit_factor) else "N/A"
-        summary["Long Hit Rate"] = f"{long_hit_rate:.2%}" if not np.isnan(long_hit_rate) else "N/A"
-        summary["Short Hit Rate"] = f"{short_hit_rate:.2%}" if not np.isnan(short_hit_rate) else "N/A"
+        summary["Profit Factor"] = (
+            f"{profit_factor:.2f}" if not np.isnan(profit_factor) else "N/A"
+        )
+        summary["Long Hit Rate"] = (
+            f"{long_hit_rate:.2%}" if not np.isnan(long_hit_rate) else "N/A"
+        )
+        summary["Short Hit Rate"] = (
+            f"{short_hit_rate:.2%}" if not np.isnan(short_hit_rate) else "N/A"
+        )
 
     return summary.astype(str)
-
-
 
 
 def backtest_strategy(
@@ -673,7 +867,7 @@ def backtest_strategy(
     Y: pd.Series,
     weights_df: pd.DataFrame,
     name: str = "Strategy",
-    start: str = config.BACKTEST_START_DATE,
+    start: str = config.FOLD3_START,
     plot: bool = True,
     save: bool = True,
 ) -> pd.DataFrame:
@@ -689,9 +883,9 @@ def backtest_strategy(
     bench_mom : pd.Series
         Daily returns of a standard momentum strategy for comparison.
     name : str, optional
-        Strategy name to be used in plot title and file name.
+        Strategy name to be used in plot title and file name, by default "Strategy".
     start : str, optional
-        Start date for comparing SPY and momentum benchmarks, by default "2021-01-01".
+        Start date for comparing SPY and momentum benchmarks, by default config.FOLD3_START.
     plot : bool, optional
         Whether to generate and save a cumulative return plot, by default True.
     filtered_signals : pd.DataFrame
@@ -708,14 +902,30 @@ def backtest_strategy(
 
     # Performance summaries
     summary = summarize_performance(
-        strategy_returns,bench_spy, filtered_signals, Y, turnover, weights_df
+        strategy_returns.loc[start:],
+        bench_spy,
+        filtered_signals,
+        Y,
+        turnover,
+        weights_df,
     )
     summary_costs = summarize_performance(
-        strategy_returns_w_costs,bench_spy, filtered_signals, Y, turnover, weights_df
+        strategy_returns_w_costs.loc[start:],
+        bench_spy,
+        filtered_signals,
+        Y,
+        turnover,
+        weights_df,
     )
-    summary_spy = summarize_performance(bench_spy.loc[start:],bench_spy, strategy=False)
-    summary_mom = summarize_performance(bench_mom.loc[start:],bench_spy, strategy=False)
-    summary_mom_ls = summarize_performance(bench_mom_ls.loc[start:],bench_spy, strategy=False)
+    summary_spy = summarize_performance(
+        bench_spy.loc[start:], bench_spy, strategy=False
+    )
+    summary_mom = summarize_performance(
+        bench_mom.loc[start:], bench_spy, strategy=False
+    )
+    summary_mom_ls = summarize_performance(
+        bench_mom_ls.loc[start:], bench_spy, strategy=False
+    )
 
     # Plotting
     if plot:
@@ -726,28 +936,34 @@ def backtest_strategy(
             bench_mom,
             name=name,
             start=start,
-            save=save
+            save=save,
         )
         plot_turnover(turnover, name=name, save=save)
-        plot_drawdown_underwater(strategy_returns,bench_mom, (name,"Standard Momentum"),save=save,file="drawdown_vs_mom.png")
-        plot_drawdown_underwater(strategy_returns,save=save)
-        plot_rolling_correlation(strategy_returns,bench_spy,bench_mom, save=save)
-        plot_leverage(weights_df,name)
-        plot_rolling_sharpe(strategy_returns,bench_mom,method="compound",save=save)
-        plot_alpha_beta(strategy_returns, bench_spy,plot=True, name=name, save=save)
+        plot_drawdown_underwater(
+            strategy_returns,
+            bench_mom,
+            (name, "Standard Momentum"),
+            save=save,
+            file="drawdown_vs_mom.png",
+        )
+        plot_drawdown_underwater(strategy_returns, save=save)
+        plot_rolling_correlation(strategy_returns, bench_spy, bench_mom, save=save)
+        plot_leverage(weights_df, name)
+        plot_rolling_sharpe(strategy_returns, bench_mom, method="compound", save=save)
+        plot_alpha_beta(strategy_returns, bench_spy, plot=True, name=name, save=save)
 
-
-    summary_df = pd.concat([summary, summary_costs, summary_spy, summary_mom, summary_mom_ls], axis=1)
+    summary_df = pd.concat(
+        [summary, summary_costs, summary_spy, summary_mom, summary_mom_ls], axis=1
+    )
     summary_df.columns = [
         f"{name} (Gross)",
         f"{name} (Net)",
         "SPY",
         "Standard Momentum",
-        "Standard Momentum (Long Short)"
+        "Standard Momentum (Long Short)",
     ]
     if save:
         summary_df.to_excel(config.PERFORMANCE_SUMMARY_XLSX)
         logger.info(f"Backtest summary saved to: {config.PERFORMANCE_SUMMARY_XLSX}")
 
     return summary_df
-

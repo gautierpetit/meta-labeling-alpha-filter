@@ -4,39 +4,23 @@ import random
 from typing import Literal
 
 import keras_tuner as kt
-
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from keras.callbacks import EarlyStopping
+from keras.layers import Activation, BatchNormalization, Dense, Dropout
+from keras.models import Sequential
+from keras.optimizers import Adam
+from keras.regularizers import l2
 from keras_tuner import Objective
-from sklearn.metrics import (
-    accuracy_score,
-    log_loss,
-    roc_auc_score,
-)
-
-
-
+from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Activation
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.regularizers import l2
-from sklearn.linear_model import LogisticRegression
-from sklearn.isotonic import IsotonicRegression
-from modeling import evaluate_model
-
-
-
 
 import config
 from data_loader import load_features, load_labels
-from modeling import scale_features, split_train_test
+from modeling import evaluate_model, scale_features, split_train_test
 
 logger = logging.getLogger(__name__)
-
-
 
 # Set random seeds
 random.seed(config.RANDOM_STATE)
@@ -48,48 +32,72 @@ os.environ["TF_DETERMINISTIC_OPS"] = "1"
 
 # Early stopping callback
 early_stop = EarlyStopping(
-    monitor="loss",
+    monitor="val_loss",
     patience=config.NN_TRAINING_PARAMS["early_stopping_patience"],
     min_delta=config.NN_TRAINING_PARAMS["early_stopping_min_delta"],
     restore_best_weights=True,
+    verbose=0,
 )
 
 
-def build_model(hp, input_dim: int) -> Sequential:
+def make_dataset(
+    X: np.ndarray, y: np.ndarray, *, batch_size: int, shuffle: bool = True
+) -> tf.data.Dataset:
     """
-    Builds a Keras MLP model with hyperparameter tuning support.
+    Create a TensorFlow dataset from features and labels.
+
+    Args:
+        X (np.ndarray): Feature matrix.
+        y (np.ndarray): Label vector.
+        batch_size (int): Batch size for the dataset.
+        shuffle (bool): Whether to shuffle the dataset.
+
+    Returns:
+        tf.data.Dataset: Prepared TensorFlow dataset.
+    """
+    ds = tf.data.Dataset.from_tensor_slices((X.astype(np.float32), y.astype(np.int32)))
+    if shuffle:
+        ds = ds.shuffle(buffer_size=len(X), seed=config.RANDOM_STATE)
+    ds = ds.batch(batch_size)
+    ds = ds.prefetch(tf.data.AUTOTUNE)
+    return ds
+
+
+def build_model(hp: kt.HyperParameters, input_dim: int) -> Sequential:
+    """
+    Build a Keras MLP model with hyperparameter tuning support.
+
+    Args:
+        hp (kt.HyperParameters): Hyperparameter tuning object.
+        input_dim (int): Number of input features.
+
+    Returns:
+        Sequential: Compiled Keras model.
     """
     n_hidden = hp.Int("n_hidden", **config.NN_HP_SPACE["n_hidden"])
-    d = hp.Float("dropout", **config.NN_HP_SPACE["dropout"])
+    dropout_rate = hp.Float("dropout", **config.NN_HP_SPACE["dropout"])
     activation = hp.Choice("activation", config.NN_HP_SPACE["activation"])
     weight_decay = hp.Choice("l2_reg", [1e-6, 1e-5, 1e-4])
 
     model = Sequential()
 
     for i in range(n_hidden):
-        units = hp.Choice(
-            f"units{i+1}", config.NN_HP_SPACE[f"units{i+1}"]
-        )
-        # OPTIONAL per layer activation [increases seach space]
-        # activation = hp.Choice(f"activation{i+1}", config.NN_HP_SPACE["activation"])
+        units = hp.Choice(f"units{i + 1}", config.NN_HP_SPACE[f"units{i + 1}"])
 
         if i == 0:
-            model.add(Dense(
-                units,
-                input_shape=(input_dim,),
-                kernel_regularizer=l2(weight_decay)
-            ))
+            model.add(
+                Dense(
+                    units, input_shape=(input_dim,), kernel_regularizer=l2(weight_decay)
+                )
+            )
         else:
-            model.add(Dense(
-                units,
-                kernel_regularizer=l2(weight_decay)
-            ))
-            
+            model.add(Dense(units, kernel_regularizer=l2(weight_decay)))
+
         if activation != "selu":
             model.add(BatchNormalization())
-        
+
         model.add(Activation(activation))
-        model.add(Dropout(d))
+        model.add(Dropout(dropout_rate))
 
     model.add(Dense(3))
 
@@ -98,20 +106,15 @@ def build_model(hp, input_dim: int) -> Sequential:
             hp.Float("learning_rate", **config.NN_HP_SPACE["learning_rate"])
         ),
         loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-        
     )
-    model.compiled = True
     return model
-
-
-
 
 
 def mlp_nested_cv(
     X: pd.DataFrame,
     Y: pd.Series,
     estimation: Literal["Random", "Bayesian"] = "Random",
-    project_name = "mlp"
+    project_name="mlp",
 ):
     y_int = Y.map(config.LABEL_MAP).values
     input_dim = X.shape[1]
@@ -130,7 +133,6 @@ def mlp_nested_cv(
         X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_train_int, y_val_int = y_int[train_idx], y_int[val_idx]
 
-
         def model_builder(hp):
             return build_model(hp, input_dim)
 
@@ -140,36 +142,49 @@ def mlp_nested_cv(
 
         tuner = tuner_cls(
             model_builder,
-            objective=Objective("val_loss",direction="min"),
+            objective=Objective("val_loss", direction="min"),
             max_trials=config.NN_TRAINING_PARAMS["max_trials"],
             executions_per_trial=1,
             directory=f"kt/fold_{fold}",
             project_name=project_name,
-            overwrite=True,
+            overwrite=False,
             seed=config.RANDOM_STATE,
         )
 
-        tuner.search(
-            X_train,
+        train_ds = make_dataset(
+            X_train.values,
             y_train_int,
-            epochs=config.NN_TRAINING_PARAMS["epochs"],
-            validation_split=0.1,
             batch_size=config.NN_TRAINING_PARAMS["batch_size"],
+        )
+        val_ds = make_dataset(
+            X_val.values,
+            y_val_int,
+            batch_size=config.NN_TRAINING_PARAMS["batch_size"],
+            shuffle=False,
+        )
+        tuner.search(
+            train_ds,
+            validation_data=val_ds,  # Provide validation dataset here
+            epochs=config.NN_TRAINING_PARAMS["epochs"],
             verbose=0,
-            use_multiprocessing=True,
-            workers=os.cpu_count(),
         )
 
         best_hp = tuner.get_best_hyperparameters(1)[0]
         best_model = tuner.hypermodel.build(best_hp)
         fold_hparams.append(best_hp)
 
+        early_stop = EarlyStopping(
+            monitor="loss",
+            patience=config.NN_TRAINING_PARAMS["early_stopping_patience"],
+            min_delta=config.NN_TRAINING_PARAMS["early_stopping_min_delta"],
+            restore_best_weights=True,
+            verbose=0,
+        )
+
         best_model.fit(
-            X_train,
-            y_train_int,
-            validation_data=(X_val, y_val_int),
+            train_ds,
+            validation_data=val_ds,
             epochs=config.NN_TRAINING_PARAMS["epochs"],
-            batch_size=config.NN_TRAINING_PARAMS["batch_size"],
             callbacks=[early_stop],
             verbose=0,
         )
@@ -179,7 +194,7 @@ def mlp_nested_cv(
 
         y_pred = np.argmax(y_proba, axis=1)
         acc = accuracy_score(y_val_int, y_pred)
-        auc = roc_auc_score(y_val_int, y_proba,multi_class="ovr", average="macro")
+        auc = roc_auc_score(y_val_int, y_proba, multi_class="ovr", average="macro")
         ll = log_loss(y_val_int, y_proba)
         acc_scores.append(acc)
         auc_scores.append(auc)
@@ -191,8 +206,6 @@ def mlp_nested_cv(
             f"\nLog Loss: {ll:.4f}"
         )
         logger.info(f"\nBest HPs: {best_hp.values}")
-
-    
 
     best_fold = np.argmax(auc_scores)
     best_fold_hp = fold_hparams[best_fold]
@@ -211,19 +224,21 @@ def mlp_nested_cv(
         f"\nModel saved to: {filename}"
     )
 
-    return model, best_fold_hp, acc_scores,auc_scores,ll_scores, fold_hparams
+    return model, best_fold_hp, acc_scores, auc_scores, ll_scores, fold_hparams
 
 
-def train_MLP(X: pd.DataFrame, Y: pd.Series, best_hp: kt.HyperParameters, input_dim: int) -> Sequential:
+def train_MLP(
+    X: pd.DataFrame, Y: pd.Series, best_hp: kt.HyperParameters, input_dim: int
+) -> Sequential:
     y_int = Y.map(config.LABEL_MAP).values
-    
 
     model = build_model(best_hp, input_dim)
+    train_ds = make_dataset(
+        X.values, y_int, batch_size=config.NN_TRAINING_PARAMS["batch_size"]
+    )
     model.fit(
-        X,
-        y_int,
+        train_ds,
         epochs=config.NN_TRAINING_PARAMS["epochs"],
-        batch_size=config.NN_TRAINING_PARAMS["batch_size"],
         callbacks=[early_stop],
         verbose=0,
     )
@@ -231,14 +246,12 @@ def train_MLP(X: pd.DataFrame, Y: pd.Series, best_hp: kt.HyperParameters, input_
     return model
 
 
-
-
-
-
 class KerasSoftmaxWrapper:
     def __init__(self, model, label_map: dict):
         self.model = model
-        self.class_labels_ = sorted(label_map.keys(), key=lambda k: label_map[k])  # e.g., [-1, 0, 1]
+        self.class_labels_ = sorted(
+            label_map.keys(), key=lambda k: label_map[k]
+        )  # e.g., [-1, 0, 1]
         self.class_to_index = label_map
 
     def predict_proba(self, X):
@@ -251,23 +264,17 @@ class KerasSoftmaxWrapper:
         return np.array([self.class_labels_[i] for i in indices])
 
 
-
-
-
 def main():
     logger.info("=== 4. Load and prepare meta-modeling data ===")
     X_scaled = scale_features(load_features())
     Y = load_labels().squeeze()
     X_train_scaled, Y_train, X_test_scaled, Y_test = split_train_test(X_scaled, Y)
 
-    
     logger.info("=== MPL training, hyperparm tuning with nested CV ===")
     clf, best_fold_hp, scores, hparams = mlp_nested_cv(
-            X_train_scaled, Y_train, "Bayesian"
+        X_train_scaled, Y_train, "Bayesian"
     )
-    acc, auc, ll = evaluate_model(
-        clf, X_test_scaled, Y_test
-    )
+    acc, auc, ll = evaluate_model(clf, X_test_scaled, Y_test)
     logger.info(
         f"\nTest Accuracy: {acc:.4f}"
         "\nTest ROC AUC: {auc:.4f}"

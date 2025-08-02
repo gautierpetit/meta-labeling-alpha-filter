@@ -1,6 +1,44 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*.so
+
+# Logs
 *.log
+*.out
+*.err
+
+# Scratchpad and temporary files
 scratchpad.*
 *.pdf
+
+# Configuration files
 config_private.py
-kt_*/
+
+# Virtual environments
+.venv/
+
+# IDE-specific files
+.vscode/
+.idea/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Test artifacts
+htmlcov/
+.tox/
+.nox/
+.coverage
+*.cover
+*.py,cover
+.hypothesis/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Project-specific directories
+kt*/

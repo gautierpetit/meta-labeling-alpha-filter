@@ -4,9 +4,9 @@ import pandas as pd
 from sklearn.base import ClassifierMixin
 
 import config
+from utils import get_class_to_index
 
 logger = logging.getLogger(__name__)
-
 
 
 def filter_signals_with_meta_model(
@@ -19,8 +19,22 @@ def filter_signals_with_meta_model(
     Filters daily trade signals using the predicted probabilities from a meta-model.
     Retains long (+1) or short (-1) signals only if the model predicts success probability above threshold.
     Works with both sklearn-like models and KerasCalibrationCV wrapper.
+
+    Args:
+        daily_signals (pd.DataFrame): DataFrame of daily trade signals (+1, -1, or 0).
+        clf (ClassifierMixin): Trained classifier for predicting probabilities.
+        X_test (pd.DataFrame): Feature matrix for testing.
+        threshold (float): Probability threshold for filtering signals (default: config.META_PROBA_THRESHOLD).
+
+    Returns:
+        pd.DataFrame: Filtered trade signals.
+
+    Example:
+        filtered_signals = filter_signals_with_meta_model(daily_signals, clf, X_test, threshold=0.6)
     """
-    filtered_signals = pd.DataFrame(0, index=daily_signals.index, columns=daily_signals.columns)
+    filtered_signals = pd.DataFrame(
+        0, index=daily_signals.index, columns=daily_signals.columns
+    )
 
     # Get non-zero signal entries
     stacked_signals = daily_signals.stack()
@@ -32,17 +46,10 @@ def filter_signals_with_meta_model(
         return filtered_signals
 
     X_valid = X_test.loc[valid_idx]
-    
 
-    if hasattr(clf, "class_labels_"):
-        class_to_index = {label: i for i, label in enumerate(clf.class_labels_)}
-        probs = clf.predict_proba(X_valid)
-    elif hasattr(clf, "classes_"):
-        class_to_index = {cls: i for i, cls in enumerate(clf.classes_)}
-        probs = clf.predict_proba(X_valid)
-    else:
-        raise ValueError("Classifier must define `class_labels_` or `classes_`.")
-
+    # Get class-to-index mapping and probabilities
+    class_to_index = get_class_to_index(clf)
+    probs = clf.predict_proba(X_valid)
 
     # Longs → class +1
     long_mask = stacked_signals.loc[valid_idx] == 1
@@ -63,4 +70,3 @@ def filter_signals_with_meta_model(
         filtered_signals.at[idx] = -1
 
     return filtered_signals
-
