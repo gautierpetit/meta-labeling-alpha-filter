@@ -20,7 +20,7 @@ from time import time
 
 import joblib
 import tensorflow as tf
-from tensorflow.keras.models import load_model
+from keras.models import load_model
 
 import config
 from config_private import NTFY_SERVER
@@ -109,7 +109,7 @@ def main():
     logging.info(f"Test ROC AUC: {auc_clf:.4f}")
     logging.info(f"Test Log loss: {logloss_clf:.4f}")
 
-    logging.info("=== 7. MLP training and calibration ===")
+    logging.info("=== 7. MLP training ===")
     mlp_v1t, best_fold_hp_v1t, acc_mlp_v1t, auc_mlp_v1t, ll_mlp_v1t, hparams_v1t = (
         mlp_nested_cv(X_fold1_scaled, Y_fold1, "Bayesian", "mlpv1t")
     )
@@ -171,6 +171,7 @@ def main():
         filtered_mom_returns_costs,
         weights_mom,
         mom_turnover,
+        costs
     ) = compute_probability_weighted_returns(
         clf=mlp_v2,
         X_test=X_meta_f3_scaled,
@@ -184,15 +185,15 @@ def main():
 
     logging.info("=== 14. Backtest meta-filtered strategy ===")
     summary = backtest_strategy(
-        strategy_returns=filtered_mom_returns,
-        strategy_returns_w_costs=filtered_mom_returns_costs,
-        turnover=mom_turnover,
-        bench_spy=spy_returns,
-        bench_mom=mom_returns_lo,
-        bench_mom_ls=mom_returns_ls,
-        filtered_signals=filtered_signals,
-        Y=Y_fold3,
-        weights_df=weights_mom,
+        strategy_returns=filtered_mom_returns.loc[config.FOLD3_START:],
+        strategy_returns_w_costs=filtered_mom_returns_costs.loc[config.FOLD3_START:],
+        turnover=mom_turnover.loc[config.FOLD3_START:],
+        bench_spy=spy_returns.loc[config.FOLD3_START:],
+        bench_mom=mom_returns_lo.loc[config.FOLD3_START:],
+        bench_mom_ls=mom_returns_ls.loc[config.FOLD3_START:],
+        filtered_signals=filtered_signals.loc[config.FOLD3_START:],
+        Y=Y_fold3.loc[config.FOLD3_START:],
+        weights_df=weights_mom.loc[config.FOLD3_START:],
         name="Stacked MLP Meta-Labeling",
         plot=True,
         save=True,

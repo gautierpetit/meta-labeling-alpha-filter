@@ -200,7 +200,7 @@ def mlp_nested_cv(
         auc_scores.append(auc)
         ll_scores.append(ll)
         logger.info(
-            f"\nBest model metrics for fold {fold}:"
+            f"\nBest model metrics for fold {fold+1}:"
             f"\nAccuracy: {acc:.4f}"
             f"\nROC AUC: {auc:.4f}"
             f"\nLog Loss: {ll:.4f}"

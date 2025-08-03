@@ -26,21 +26,21 @@ def calculate_feature_importance(raw_importance: pd.Series) -> pd.Series:
     return importance
 
 
-def save_shap_values(shap_values: list, X_test: pd.DataFrame, name: str) -> None:
+def save_shap_values(shap_values: np.ndarray, X_test: pd.DataFrame, name: str) -> None:
     """
     Save SHAP values for each class to parquet files.
 
     Args:
-        shap_values (list): SHAP values for each class.
+        shap_values (ndarray): SHAP values of shape (n_samples, n_features, n_classes).
         X_test (pd.DataFrame): Test dataset.
         name (str): Name of the model for saving outputs.
 
     Returns:
         None
     """
-    for class_idx in range(len(shap_values)):
+    for class_idx in range(shap_values.shape[2]):
         class_df = pd.DataFrame(
-            shap_values[class_idx],
+            shap_values[:, :, class_idx],
             columns=X_test.columns,
             index=X_test.index,
         )
@@ -49,12 +49,12 @@ def save_shap_values(shap_values: list, X_test: pd.DataFrame, name: str) -> None
         )
 
 
+
 def explain_model(
     model: Union[BaseEstimator, Model],
     X_test: pd.DataFrame,
     name: str = "model",
-    X_train: Optional[pd.DataFrame] = None,
-    class_plot: int = 2,
+    X_train: Optional[pd.DataFrame] = None
 ) -> Union[shap.Explanation, list]:
     """
     Generate SHAP explanations for a given model and test dataset.
@@ -64,7 +64,6 @@ def explain_model(
         X_test (pd.DataFrame): Test dataset for which SHAP values are computed.
         name (str): Name of the model for saving outputs (default: "model").
         X_train (Optional[pd.DataFrame]): Training dataset for background data (required for deep models).
-        class_plot (int): Class index for which to generate the SHAP summary plot (default: 2).
 
     Returns:
         None
@@ -105,7 +104,10 @@ def explain_model(
     save_shap_values(shap_values, X_test, name)
 
     # Generate SHAP summary plot
-    shap.summary_plot(shap_values[class_plot], X_test, show=False)
-    plt.gcf().tight_layout()
-    plt.savefig(config.SHAP_VALUES_DIR / f"summary_{name}.png", bbox_inches="tight")
-    plt.close()
+    for class_idx in range(shap_values.shape[2]):
+        shap.summary_plot(shap_values[:,:,class_idx], X_test, show=False,class_names=[f"Class {class_idx}"])
+        plt.title(f"SHAP Summary Plot for {name} - Class {class_idx}")
+        plt.gcf().tight_layout()
+        plt.savefig(config.SHAP_VALUES_DIR / f"summary_{name}_class_{class_idx}.png", bbox_inches="tight")
+        plt.close()
+

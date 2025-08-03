@@ -45,7 +45,7 @@ BOTTOM_QUANTILE = 0.1
 PT_SL_FACTOR = (
     5,
     5,
-)  # low:3,3;high:6,6, bestyet:5,5;4,3  negloss 1500%cumul, 0.9SR, logloss
+)  
 MAX_HOLDING_PERIOD = 20
 
 # === META MODEL SETTINGS ===
@@ -58,70 +58,70 @@ FOLD2_END = "2019-12-31"
 FOLD3_START = "2020-01-01"
 FOLD3_END = "2024-12-31"
 
-CV_N_SPLITS = 3  # 5
-RANDOM_SEARCH_ITER = 50  # 50
-CV_SCORING = "neg_log_loss"  # "f1_weighted", "accuracy", "neg_log_loss"
+CV_N_SPLITS = 3  
+RANDOM_SEARCH_ITER = 50  
+CV_SCORING = "neg_log_loss" 
 
 
 LABEL_MAP = {-1: 0, 0: 1, 1: 2}
 
 # === HYPERPARAMETER SEARCH SPACE ===
 HYPERPARAM_RANDOM = {
-    "n_estimators": randint(300, 2000),  # Wider boosting rounds range
-    "learning_rate": loguniform(0.001, 0.2),  # Explore lower LR for slower convergence
-    "num_leaves": randint(20, 200),  # Allow more complex trees
-    "max_depth": randint(3, 30),  # Deeper trees if needed
-    "min_child_samples": randint(10, 100),  # Tighter control on overfitting
-    "subsample": uniform(0.6, 0.4),  # More sampling diversity
-    "colsample_bytree": uniform(0.5, 0.5),  # Test lower values for feature selection
-    "reg_alpha": loguniform(1e-4, 10),  # Broaden L1
-    "reg_lambda": loguniform(1e-4, 10),  # Broaden L2
-    "scale_pos_weight": uniform(0.5, 2.0),  # Very useful for class imbalance
-    "min_split_gain": loguniform(1e-5, 1.0),  # Minimum gain to split
-    "bagging_freq": randint(0, 10),  # Boosting randomization frequency
+    "n_estimators": randint(600, 1200),
+    "learning_rate": loguniform(0.003, 0.01),  
+    "num_leaves": randint(40, 100),  
+    "max_depth": randint(20, 40),  
+    "min_child_samples": randint(20, 60),  
+    "subsample": uniform(0.7, 1),  
+    "colsample_bytree": uniform(0.7, 1.0), 
+    "reg_alpha": loguniform(1.0, 10),  
+    "reg_lambda": loguniform(0.01, 1),  
+    "scale_pos_weight": uniform(1.0, 2.0),  
+    "min_split_gain": loguniform(1e-5, 1e-2), 
+    "bagging_freq": randint(1, 10),  
 }
 
 HYPERPARAM_BAYESIAN = {
-    "n_estimators": Integer(400, 900),
+    "n_estimators": Integer(600, 1200),
     "learning_rate": Real(0.002, 0.01, prior="log-uniform"),
-    "num_leaves": Integer(15, 40),
-    "max_depth": Integer(20, 40),  # or fix to -1 (unlimited)
-    "min_child_samples": Integer(40, 70),
-    "subsample": Real(0.9, 1.0),
-    "colsample_bytree": Real(0.8, 1.0),
-    "reg_alpha": Real(5.0, 10.0),  # it wants heavy regularization
-    "reg_lambda": Real(0.1, 1.0),
-    "scale_pos_weight": Real(0.9, 1.2),
+    "num_leaves": Integer(40, 100),
+    "max_depth": Integer(20, 40),  
+    "min_child_samples": Integer(20, 60),
+    "subsample": Real(0.7, 1.0),
+    "colsample_bytree": Real(0.7, 1.0),
+    "reg_alpha": Real(1.0, 10.0, prior="log-uniform"),
+    "reg_lambda": Real(0.01, 1.0, prior="log-uniform"),
+    "scale_pos_weight": Real(1.0, 2.0),
     "min_split_gain": Real(1e-5, 1e-2, prior="log-uniform"),
-    "bagging_freq": Integer(5, 10),
+    "bagging_freq": Integer(1, 10),
 }
 
 NN_HP_SPACE = {
     "units1": [256, 512, 1024],
     "units2": [128, 256, 512],
     "units3": [64, 128, 256],
-    "units4": [32, 64, 128],
+    "units4": [32, 64],
     "n_hidden": {"min_value": 3, "max_value": 4, "step": 1},
-    "dropout": {"min_value": 0.0, "max_value": 0.3, "step": 0.05},
-    "l2_reg": [1e-5, 1e-4],
-    "activation": ["relu", "gelu"],
-    "learning_rate": {"min_value": 1e-6, "max_value": 5e-3, "sampling": "log"},
+    "dropout": {"min_value": 0.05, "max_value": 0.35, "step": 0.05},
+    "l2_reg": [1e-6, 1e-5, 1e-4],
+    "activation": ["relu","swish"], 
+    "learning_rate": {"min_value": 1e-7, "max_value": 1e-5, "sampling": "log"},
 }
 
 NN_TRAINING_PARAMS = {
-    "epochs": 200,
+    "epochs": 200, 
     "batch_size": 8192,
-    "max_trials": 100,  # 50
+    "max_trials": 100,  
     "early_stopping_patience": 15,
-    "early_stopping_min_delta": 1e-4,
+    "early_stopping_min_delta": 2e-4,
 }
 
 
 # === BACKTESTING SETTINGS ===
 
 LONG_SIDE_TC = 0.001  # 10 bps
-SHORT_SIDE_TC = 0.001  # 20 bps
-LONG_ONLY = True
+SHORT_SIDE_TC = 0.002  # 20 bps
+LONG_ONLY = False
 INVERT_SIGNALS = True
 TARGET_VOL = 0.2
 VOL_SPAN = 20

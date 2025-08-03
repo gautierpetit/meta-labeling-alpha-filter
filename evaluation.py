@@ -902,7 +902,7 @@ def backtest_strategy(
 
     # Performance summaries
     summary = summarize_performance(
-        strategy_returns.loc[start:],
+        strategy_returns,
         bench_spy,
         filtered_signals,
         Y,
@@ -910,7 +910,7 @@ def backtest_strategy(
         weights_df,
     )
     summary_costs = summarize_performance(
-        strategy_returns_w_costs.loc[start:],
+        strategy_returns_w_costs,
         bench_spy,
         filtered_signals,
         Y,
@@ -918,13 +918,13 @@ def backtest_strategy(
         weights_df,
     )
     summary_spy = summarize_performance(
-        bench_spy.loc[start:], bench_spy, strategy=False
+        bench_spy, bench_spy, strategy=False
     )
     summary_mom = summarize_performance(
-        bench_mom.loc[start:], bench_spy, strategy=False
+        bench_mom, bench_spy, strategy=False
     )
     summary_mom_ls = summarize_performance(
-        bench_mom_ls.loc[start:], bench_spy, strategy=False
+        bench_mom_ls, bench_spy, strategy=False
     )
 
     # Plotting
