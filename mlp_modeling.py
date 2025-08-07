@@ -41,8 +41,7 @@ early_stop = EarlyStopping(
 
 
 def make_dataset(
-    X: np.ndarray, y: np.ndarray, *, batch_size: int, shuffle: bool = True
-) -> tf.data.Dataset:
+    X: np.ndarray, y: np.ndarray, *, batch_size: int,) -> tf.data.Dataset:
     """
     Create a TensorFlow dataset from features and labels.
 
@@ -50,20 +49,18 @@ def make_dataset(
         X (np.ndarray): Feature matrix.
         y (np.ndarray): Label vector.
         batch_size (int): Batch size for the dataset.
-        shuffle (bool): Whether to shuffle the dataset.
+
 
     Returns:
         tf.data.Dataset: Prepared TensorFlow dataset.
     """
     ds = tf.data.Dataset.from_tensor_slices((X.astype(np.float32), y.astype(np.int32)))
-    if shuffle:
-        ds = ds.shuffle(buffer_size=len(X), seed=config.RANDOM_STATE)
     ds = ds.batch(batch_size)
     ds = ds.prefetch(tf.data.AUTOTUNE)
     return ds
 
 
-def build_model(hp: kt.HyperParameters, input_dim: int) -> Sequential:
+def build_model(hp: kt.HyperParameters, input_dim: int, project_name="mlp") -> Sequential:
     """
     Build a Keras MLP model with hyperparameter tuning support.
 
@@ -74,15 +71,18 @@ def build_model(hp: kt.HyperParameters, input_dim: int) -> Sequential:
     Returns:
         Sequential: Compiled Keras model.
     """
-    n_hidden = hp.Int("n_hidden", **config.NN_HP_SPACE["n_hidden"])
-    dropout_rate = hp.Float("dropout", **config.NN_HP_SPACE["dropout"])
-    activation = hp.Choice("activation", config.NN_HP_SPACE["activation"])
-    weight_decay = hp.Choice("l2_reg", [1e-6, 1e-5, 1e-4])
+
+    hp_space = config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
+
+    n_hidden = hp.Int("n_hidden", **hp_space["n_hidden"])
+    dropout_rate = hp.Float("dropout", **hp_space["dropout"])
+    activation = hp.Choice("activation", hp_space["activation"])
+    weight_decay = hp.Choice("l2_reg", hp_space["l2_reg"])
 
     model = Sequential()
 
     for i in range(n_hidden):
-        units = hp.Choice(f"units{i + 1}", config.NN_HP_SPACE[f"units{i + 1}"])
+        units = hp.Choice(f"units{i + 1}", hp_space[f"units{i + 1}"])
 
         if i == 0:
             model.add(
@@ -93,7 +93,7 @@ def build_model(hp: kt.HyperParameters, input_dim: int) -> Sequential:
         else:
             model.add(Dense(units, kernel_regularizer=l2(weight_decay)))
 
-        if activation != "selu":
+        if hp_space["batch_norm"]:
             model.add(BatchNormalization())
 
         model.add(Activation(activation))
@@ -103,7 +103,7 @@ def build_model(hp: kt.HyperParameters, input_dim: int) -> Sequential:
 
     model.compile(
         optimizer=Adam(
-            hp.Float("learning_rate", **config.NN_HP_SPACE["learning_rate"])
+            hp.Float("learning_rate", **hp_space["learning_rate"])
         ),
         loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
     )
@@ -119,6 +119,8 @@ def mlp_nested_cv(
     y_int = Y.map(config.LABEL_MAP).values
     input_dim = X.shape[1]
 
+    X, scaler = scale_features(X, return_scaler=True)
+
     outer_cv = TimeSeriesSplit(
         n_splits=config.CV_N_SPLITS, gap=config.MAX_HOLDING_PERIOD
     )
@@ -127,6 +129,8 @@ def mlp_nested_cv(
     ll_scores = []
     fold_hparams = []
 
+    hp_space = config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
+
     for fold, (train_idx, val_idx) in enumerate(outer_cv.split(X), 1):
         logger.info(f"\nOuter Fold {fold}/{config.CV_N_SPLITS}")
 
@@ -134,7 +138,7 @@ def mlp_nested_cv(
         y_train_int, y_val_int = y_int[train_idx], y_int[val_idx]
 
         def model_builder(hp):
-            return build_model(hp, input_dim)
+            return build_model(hp, input_dim, project_name=project_name)
 
         tuner_cls = (
             kt.BayesianOptimization if estimation == "Bayesian" else kt.RandomSearch
@@ -143,7 +147,7 @@ def mlp_nested_cv(
         tuner = tuner_cls(
             model_builder,
             objective=Objective("val_loss", direction="min"),
-            max_trials=config.NN_TRAINING_PARAMS["max_trials"],
+            max_trials=hp_space["max_trials"],
             executions_per_trial=1,
             directory=f"kt/fold_{fold}",
             project_name=project_name,
@@ -154,18 +158,17 @@ def mlp_nested_cv(
         train_ds = make_dataset(
             X_train.values,
             y_train_int,
-            batch_size=config.NN_TRAINING_PARAMS["batch_size"],
+            batch_size=hp_space["batch_size"],
         )
         val_ds = make_dataset(
             X_val.values,
             y_val_int,
-            batch_size=config.NN_TRAINING_PARAMS["batch_size"],
-            shuffle=False,
-        )
+            batch_size=hp_space["batch_size"],
+            )
         tuner.search(
             train_ds,
             validation_data=val_ds,  # Provide validation dataset here
-            epochs=config.NN_TRAINING_PARAMS["epochs"],
+            epochs=hp_space["epochs"],
             verbose=0,
         )
 
@@ -184,7 +187,7 @@ def mlp_nested_cv(
         best_model.fit(
             train_ds,
             validation_data=val_ds,
-            epochs=config.NN_TRAINING_PARAMS["epochs"],
+            epochs=hp_space["epochs"],
             callbacks=[early_stop],
             verbose=0,
         )
@@ -200,7 +203,7 @@ def mlp_nested_cv(
         auc_scores.append(auc)
         ll_scores.append(ll)
         logger.info(
-            f"\nBest model metrics for fold {fold+1}:"
+            f"\nBest model metrics for fold {fold}:"
             f"\nAccuracy: {acc:.4f}"
             f"\nROC AUC: {auc:.4f}"
             f"\nLog Loss: {ll:.4f}"
@@ -210,7 +213,7 @@ def mlp_nested_cv(
     best_fold = np.argmax(auc_scores)
     best_fold_hp = fold_hparams[best_fold]
 
-    model = train_MLP(X, Y, best_fold_hp, input_dim)
+    model = train_MLP(X, Y, best_fold_hp, input_dim, project_name=project_name)
     filename = config.MODELS_DIR / f"{project_name}.pkl"
     model.save(filename)
 
@@ -219,26 +222,27 @@ def mlp_nested_cv(
         f"\nMean Accuracy: {np.mean(acc_scores):.4f} ± {np.std(acc_scores):.4f}"
         f"\nMean ROC AUC: {np.mean(auc_scores):.4f} ± {np.std(auc_scores):.4f}"
         f"\nMean Log Loss: {np.mean(ll_scores):.4f} ± {np.std(ll_scores):.4f}"
-        f"\nBest Fold selected is: {best_fold} with AUC {auc_scores[best_fold]:.4f}"
+        f"\nBest Fold selected is: {best_fold+1} with AUC {auc_scores[best_fold]:.4f}"
         f"\nTraining model on best parameters: {best_fold_hp.values}"
         f"\nModel saved to: {filename}"
     )
 
-    return model, best_fold_hp, acc_scores, auc_scores, ll_scores, fold_hparams
+    return model, scaler, best_fold_hp, acc_scores, auc_scores, ll_scores, fold_hparams
 
 
 def train_MLP(
-    X: pd.DataFrame, Y: pd.Series, best_hp: kt.HyperParameters, input_dim: int
+    X: pd.DataFrame, Y: pd.Series, best_hp: kt.HyperParameters, input_dim: int, project_name="mlp"
 ) -> Sequential:
-    y_int = Y.map(config.LABEL_MAP).values
+    y_int = Y.map(config.LABEL_MAP).values  
+    hp_space = config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
 
     model = build_model(best_hp, input_dim)
     train_ds = make_dataset(
-        X.values, y_int, batch_size=config.NN_TRAINING_PARAMS["batch_size"]
+        X.values, y_int, batch_size=hp_space["batch_size"]
     )
     model.fit(
         train_ds,
-        epochs=config.NN_TRAINING_PARAMS["epochs"],
+        epochs=hp_space["epochs"],
         callbacks=[early_stop],
         verbose=0,
     )
@@ -247,14 +251,17 @@ def train_MLP(
 
 
 class KerasSoftmaxWrapper:
-    def __init__(self, model, label_map: dict):
+    def __init__(self, model, label_map: dict, scaler=None):
         self.model = model
         self.class_labels_ = sorted(
             label_map.keys(), key=lambda k: label_map[k]
         )  # e.g., [-1, 0, 1]
         self.class_to_index = label_map
+        self.scaler = scaler
 
     def predict_proba(self, X):
+        if self.scaler:
+            X = pd.DataFrame(self.scaler.transform(X), index=X.index, columns=X.columns)
         logits = self.model.predict(X)
         return tf.nn.softmax(logits, axis=1).numpy()
 

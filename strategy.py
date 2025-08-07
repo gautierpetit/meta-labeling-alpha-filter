@@ -64,10 +64,10 @@ def get_daily_signals(
             daily_signals.loc[start:end, shorts] = -1
 
     daily_signals = daily_signals.where(~prices.isna(), other=0)
-    signal_dates = daily_signals.stack()[daily_signals.stack() != 0].index
+    
 
     logger.info("Daily trading signals generated successfully.")
-    return daily_signals, signal_dates
+    return daily_signals
 
 
 def compute_momentum(

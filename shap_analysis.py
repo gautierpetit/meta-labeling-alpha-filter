@@ -92,7 +92,7 @@ def explain_model(
 
         background = X_train.sample(100, random_state=config.RANDOM_STATE)
         explainer = shap.DeepExplainer(model, background.values)
-        shap_values = explainer.shap_values(X_test.values)
+        shap_values = explainer.shap_values(X_test.values, check_additivity=False)
 
         avg_across_classes = np.mean(np.abs(shap_values), axis=2)
         mean_abs_shap = np.mean(avg_across_classes, axis=0)

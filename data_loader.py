@@ -124,8 +124,14 @@ def load_rates() -> pd.DataFrame:
     Returns:
         pd.DataFrame: DataFrame containing market yield data aligned with the trading calendar.
     """
-    rates = pd.read_csv(config.DGS10)
-    rates.index = pd.to_datetime(rates["observation_date"], format="%Y-%m-%d")
-    rates = rates.reindex(load_prices().index).ffill()
-    rates.drop(columns="observation_date", inplace=True)
-    return rates
+    ten_year = pd.read_csv(config.DGS10)
+    ten_year.index = pd.to_datetime(ten_year["observation_date"], format="%Y-%m-%d")
+    ten_year = ten_year.reindex(load_prices().index).ffill()
+    ten_year.drop(columns="observation_date", inplace=True)
+
+    ten_year_minus = pd.read_csv(config.T10Y3M)
+    ten_year_minus.index = pd.to_datetime(ten_year_minus["observation_date"], format="%Y-%m-%d")
+    ten_year_minus = ten_year_minus.reindex(load_prices().index).ffill()
+    ten_year_minus.drop(columns="observation_date", inplace=True)
+
+    return pd.concat([ten_year, ten_year_minus], axis=1)

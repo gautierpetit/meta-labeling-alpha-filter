@@ -32,7 +32,7 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
-def scale_features(X: pd.DataFrame) -> pd.DataFrame:
+def scale_features(X: pd.DataFrame, return_scaler=False) -> pd.DataFrame:
     """
     Standardize features using StandardScaler.
 
@@ -41,10 +41,12 @@ def scale_features(X: pd.DataFrame) -> pd.DataFrame:
 
     Returns:
         pd.DataFrame: Scaled feature matrix with same index and columns.
+        scaker (StandardScaler): Fitted scaler object if return_scaler is True.
     """
+    
     scaler = StandardScaler()
     X_scaled = pd.DataFrame(scaler.fit_transform(X), index=X.index, columns=X.columns)
-    return X_scaled
+    return (X_scaled, scaler) if return_scaler else X_scaled
 
 
 def split_train_test(
@@ -97,6 +99,7 @@ def train_meta_model(
         objective="multiclass",
         random_state=config.RANDOM_STATE,
         n_jobs=config.N_JOBS,
+        verbose=-1
     )
 
     cv = TimeSeriesSplit(n_splits=config.CV_N_SPLITS, gap=config.MAX_HOLDING_PERIOD)

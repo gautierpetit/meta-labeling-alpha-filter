@@ -56,7 +56,9 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
 
     # Labeling
     logger.info("Generating labels using triple barrier method.")
-    daily_signals, signal_dates = get_daily_signals(prices, monthly_prices)
+    daily_signals = get_daily_signals(
+        prices, monthly_prices, long_only=config.LONG_ONLY
+    )
     Y, label_times = apply_triple_barrier(prices, daily_signals, volatility)
 
     # Core price & return features
@@ -87,8 +89,26 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
         index=prices.index,
         columns=prices.columns,
     )
-    rates_feature = pd.DataFrame(
-        np.tile(rates.values.reshape(-1, 1), (1, prices.shape[1])),
+    vix_high = pd.DataFrame(
+        np.tile((vix>25).astype(int).values.reshape(-1, 1), (1, prices.shape[1])),
+        index=prices.index,
+        columns=prices.columns,
+    )
+    ten_year = pd.DataFrame(
+        np.tile(rates["DGS10"].values.reshape(-1, 1), (1, prices.shape[1])),
+        index=prices.index,
+        columns=prices.columns,
+    )
+    ten_year_minus = pd.DataFrame(
+        np.tile(rates["T10Y3M"].values.reshape(-1, 1), (1, prices.shape[1])),
+        index=prices.index,
+        columns=prices.columns,
+    )
+    inversion = pd.DataFrame(
+        np.tile(
+            (rates["T10Y3M"] < 0).astype(int).values.reshape(-1, 1),
+            (1, prices.shape[1]),
+        ),
         index=prices.index,
         columns=prices.columns,
     )
@@ -96,6 +116,22 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
     spy_returns_5d = spy_prices.pct_change(5, fill_method=None).to_frame()
     spy_returns_5d_feature = pd.DataFrame(
         np.tile(spy_returns_5d.values.reshape(-1, 1), (1, prices.shape[1])),
+        index=prices.index,
+        columns=prices.columns,
+    )
+
+    spy_returns_10d = spy_prices.pct_change(10, fill_method=None)
+    market_returns_zscore = (spy_returns_10d - spy_returns_10d.mean()) / spy_returns_10d.std()
+    market_returns_zscore_feature = pd.DataFrame(
+        np.tile(market_returns_zscore.values.reshape(-1, 1), (1, prices.shape[1])),
+        index=prices.index,
+        columns=prices.columns,
+    )
+    # market volatility z score
+    spy_vol = spy_prices.pct_change(fill_method=None).rolling(30).std()
+    market_vol_zscore = (spy_vol - spy_vol.mean()) / spy_vol.std()
+    market_vol_zscore_feature = pd.DataFrame(
+        np.tile(market_vol_zscore.values.reshape(-1, 1), (1, prices.shape[1])),
         index=prices.index,
         columns=prices.columns,
     )
@@ -298,9 +334,12 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
         "returns_20d": returns_20d,
         "price_percentile": price_percentile,
         "spy_returns_5d": spy_returns_5d_feature,
+        "market_returns_zscore": market_returns_zscore_feature,
+        "market_vol_zscore": market_vol_zscore_feature,
         "volatility_20d": volatility_20d,
         "volatility_60d": volatility_60d,
         "vix": vix_feature,
+        "vix_high": vix_high,
         "beta_20d": beta_20d,
         "corr_spy_20d": corr_spy_20d,
         "volume": volumes,
@@ -311,7 +350,9 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
         "bollinger_zscore": (prices - prices.rolling(20).mean())
         / prices.rolling(20).std(),
         "volatility_zscore": volatility_zscore,
-        "10yTbill": rates_feature,
+        "10yTbill": ten_year,
+        "yield_curve_slope": ten_year_minus,
+        "yc_inversion": inversion,
         "vol_adj_momentum": vol_adj_momentum,
         "momentum_10d": momentum_10d,
         "momentum_20d": momentum_20d,
@@ -339,7 +380,7 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
     # Build final feature matrix
     logger.info("Building final feature matrix.")
     X_rows = []
-    for date, ticker in tqdm(signal_dates, desc="Building X"):
+    for date, ticker in tqdm(Y.stack().index, desc="Building X"):
         row = {"date": date, "ticker": ticker}
         for fname, fmat in features.items():
             value = (
@@ -354,7 +395,25 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
             row[fname] = value
         X_rows.append(row)
 
-    X = pd.DataFrame(X_rows).set_index(["date", "ticker"]).dropna()
+    X = pd.DataFrame(X_rows).set_index(["date", "ticker"])
+    X = X.replace([np.inf, -np.inf], np.nan)
+    # Drop worst rows (≥10% NaNs)
+    X = X.dropna(thresh=int(0.9 * X.shape[1]))
+    # Forward + Backward fill
+    X = (
+        X.groupby(level=1)
+        .apply(lambda g: g.ffill(limit=10))
+        .reset_index(level=0, drop=True)
+    )
+    X = (
+        X.groupby(level=1)
+        .apply(lambda g: g.bfill(limit=5))
+        .reset_index(level=0, drop=True)
+    )
+    # Safe fallback for sparse leftovers
+    X = X.fillna(X.median())
+    # Sort for consistency with Y
+    X = X.sort_index(level=[0, 1])
 
     # Correlation pruning
     logger.info("Pruning highly correlated features.")
@@ -378,56 +437,116 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
 
 def build_meta_features(
     X_base: pd.DataFrame,
+    daily_signals: pd.DataFrame,
     base_model_lgbm,
     base_model_mlp,
-    scale: bool = True,
 ) -> pd.DataFrame:
     """
-    Build meta features by augmenting original features with:
-    - LGBM predicted probabilities
-    - MLP predicted probabilities
-    - LGBM predicted class
-    - MLP predicted class
-
-    Args:
-        X_base (pd.DataFrame): Input features to apply base models on.
-        base_model_lgbm: Calibrated LightGBM model (must have .predict_proba and .predict).
-        base_model_mlp: KerasSoftmaxWrapper for MLP model.
-        scale (bool): Whether to standard scale the result.
-
-    Returns:
-        pd.DataFrame: Augmented meta feature set.
+    Build meta features using:
+    - First-stage model predictions
+    - Meta-level engineered features
+    - Market regime context
+    - Raw signal direction
     """
+    X_base_scaled = scale_features(X_base)
 
-    # LGBM Probabilities
-    P_lgbm = pd.DataFrame(
+    logger.info("First-stage model predictions.")
+    proba_clf = pd.DataFrame(
         base_model_lgbm.predict_proba(X_base),
         index=X_base.index,
         columns=[f"proba_clf_{cls}" for cls in base_model_lgbm.classes_],
     )
-
-    # MLP Probabilities
-    P_mlp = pd.DataFrame(
-        base_model_mlp.predict_proba(X_base),
+    proba_mlp = pd.DataFrame(
+        base_model_mlp.predict_proba(X_base_scaled),
         index=X_base.index,
         columns=[f"proba_mlp_{cls}" for cls in base_model_mlp.class_labels_],
     )
-
-    # Predicted classes
-    Pred_lgbm = pd.DataFrame(
+    clf_pred = pd.DataFrame(
         base_model_lgbm.predict(X_base), index=X_base.index, columns=["clf_pred"]
     )
-
-    Pred_mlp = pd.DataFrame(
-        base_model_mlp.predict(X_base), index=X_base.index, columns=["mlp_pred"]
+    mlp_pred = pd.DataFrame(
+        base_model_mlp.predict(X_base_scaled), index=X_base.index, columns=["mlp_pred"]
     )
 
-    # Concatenate original features and meta-features
-    X_meta = pd.concat([X_base, P_lgbm, P_mlp, Pred_lgbm, Pred_mlp], axis=1)
+    logger.info("Engineering meta features.")
+    proba_gap_clf = proba_clf["proba_clf_1"] - proba_clf[
+        ["proba_clf_0", "proba_clf_-1"]
+    ].max(axis=1)
+    proba_gap_mlp = proba_mlp["proba_mlp_1"] - proba_mlp[
+        ["proba_mlp_0", "proba_mlp_-1"]
+    ].max(axis=1)
+    model_agreement = (
+        (clf_pred["clf_pred"] == mlp_pred["mlp_pred"])
+        .astype(int)
+        .rename("model_agreement")
+    )
+    confidence_agreement = (
+        (proba_clf["proba_clf_1"] - proba_mlp["proba_mlp_1"])
+        .abs()
+        .rename("confidence_agreement")
+    )
+    confidence_mean = (
+        (proba_clf["proba_clf_1"] + proba_mlp["proba_mlp_1"]) / 2
+    ).rename("confidence_mean")
 
-    if scale:
-        X_meta = scale_features(X_meta)
+    logger.info("Market context features.")
+    dates = X_base.index.get_level_values("Date").unique()
+    tickers = X_base.index.get_level_values("Ticker").unique()
+    index = pd.MultiIndex.from_product([dates, tickers], names=["date", "ticker"])
 
+    vix = load_vix().reindex(dates).ffill()
+    rates = load_rates().reindex(dates).ffill()
+    month_of_year_sin = np.sin(2 * np.pi * dates.month / 12)
+
+    
+    vix_feature = pd.Series(
+        np.repeat(vix.values, len(tickers)), index=index, name="vix"
+    )
+    vix_high = pd.Series(
+        np.repeat((vix > 25).astype(int).values, len(tickers)), index=index, name="vix_high"
+    )
+    ten_year = pd.Series(
+        np.repeat(rates["DGS10"].values, len(tickers)), index=index, name="10yTbill"
+    )
+    ten_year_minus = pd.Series(
+        np.repeat(rates["T10Y3M"].values, len(tickers)),
+        index=index,
+        name="10yTbill_minus3m",
+    )
+    inversion = pd.Series(
+        np.repeat((rates["T10Y3M"] < 0).astype(int).values, len(tickers)),
+        index=index,
+        name="yc_inversion",
+    )
+    month_sin_feature = pd.Series(
+        np.repeat(month_of_year_sin.values, len(tickers)),
+        index=index,
+        name="month_of_year_sin",
+    )
+
+    logger.info("Combining features.")
+    feature_frames = [
+        proba_clf,
+        proba_mlp,
+        clf_pred,
+        mlp_pred,
+        proba_gap_clf.rename("proba_gap_clf"),
+        proba_gap_mlp.rename("proba_gap_mlp"),
+        model_agreement,
+        confidence_agreement,
+        confidence_mean,
+        vix_feature.loc[X_base.index],
+        vix_high.loc[X_base.index],
+        ten_year.loc[X_base.index],
+        ten_year_minus.loc[X_base.index],
+        inversion.loc[X_base.index],
+        month_sin_feature.loc[X_base.index],
+        daily_signals.stack().reindex_like(X_base).rename("raw_signal_direction"),
+    ]
+
+    X_meta = pd.concat(feature_frames, axis=1)
+
+    logger.info(f"X_meta shape: {X_meta.shape}")
     return X_meta
 
 

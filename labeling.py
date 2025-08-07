@@ -13,11 +13,11 @@ def apply_triple_barrier(
     prices: pd.DataFrame,
     daily_signals: pd.DataFrame,
     volatility: pd.DataFrame,
-    pt_sl_factor: Tuple[float, float] = config.PT_SL_FACTOR,
+    tp_sl_factor: Tuple[float, float] = config.PT_SL_FACTOR,
     max_holding_period: int = config.MAX_HOLDING_PERIOD,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Applies the triple barrier method for long/short trades.
+    Applies the triple barrier method for labeling trades.
 
     Parameters
     ----------
@@ -27,8 +27,8 @@ def apply_triple_barrier(
         Signal matrix with values in {-1, 0, 1}.
     volatility : pd.DataFrame
         Rolling volatility estimates.
-    pt_sl_factor : Tuple[float, float], optional
-        Tuple of (pt_multiplier, sl_multiplier), by default config.PT_SL_FACTOR.
+    tp_sl_factor : Tuple[float, float], optional
+        Tuple of (take-profit multiplier, stop-loss multiplier), by default config.PT_SL_FACTOR.
     max_holding_period : int, optional
         Maximum holding period in days, by default config.MAX_HOLDING_PERIOD.
 
@@ -44,7 +44,7 @@ def apply_triple_barrier(
     for date in tqdm(daily_signals.index, desc="Applying Triple Barrier"):
         tickers = daily_signals.columns[daily_signals.loc[date] != 0]
         for ticker in tickers:
-            side = daily_signals.at[date, ticker]  # 1 for long, -1 for short
+            side = daily_signals.at[date, ticker]
             entry_price = prices.at[date, ticker]
             vol = volatility.at[date, ticker]
 
@@ -52,7 +52,7 @@ def apply_triple_barrier(
                 continue
 
             tp_level, sl_level = calculate_barrier_levels(
-                entry_price, vol, side, pt_sl_factor
+                entry_price, vol, side, tp_sl_factor
             )
 
             future_dates = prices.index[prices.index > date][:max_holding_period]
@@ -77,7 +77,7 @@ def apply_triple_barrier(
 
 
 def calculate_barrier_levels(
-    entry_price: float, vol: float, side: int, pt_sl_factor: Tuple[float, float]
+    entry_price: float, vol: float, side: int, tp_sl_factor: Tuple[float, float]
 ) -> Tuple[float, float]:
     """
     Calculate take-profit and stop-loss levels based on entry price, volatility, and trade side.
@@ -90,8 +90,8 @@ def calculate_barrier_levels(
         Volatility estimate.
     side : int
         Trade side (1 for long, -1 for short).
-    pt_sl_factor : Tuple[float, float]
-        Tuple of (pt_multiplier, sl_multiplier).
+    tp_sl_factor : Tuple[float, float]
+        Tuple of (take-profit multiplier, stop-loss multiplier).
 
     Returns
     -------
@@ -99,11 +99,11 @@ def calculate_barrier_levels(
         Take-profit and stop-loss levels.
     """
     if side == 1:  # Long trade
-        tp_level = entry_price * (1 + pt_sl_factor[0] * vol)
-        sl_level = entry_price * (1 - pt_sl_factor[1] * vol)
+        tp_level = entry_price * (1 + tp_sl_factor[0] * vol)
+        sl_level = entry_price * (1 - tp_sl_factor[1] * vol)
     else:  # Short trade
-        tp_level = entry_price * (1 - pt_sl_factor[0] * vol)
-        sl_level = entry_price * (1 + pt_sl_factor[1] * vol)
+        tp_level = entry_price * (1 - tp_sl_factor[0] * vol)
+        sl_level = entry_price * (1 + tp_sl_factor[1] * vol)
 
     return tp_level, sl_level
 
@@ -139,16 +139,16 @@ def determine_label_and_exit_date(
     return 0, future_prices.index[-1] if not future_prices.empty else None
 
 
-def scan_pt_sl_grid(
+def scan_tp_sl_grid(
     prices: pd.DataFrame,
     daily_signals: pd.DataFrame,
     volatility: pd.DataFrame,
-    pt_range: Tuple[int, int] = (1, 4),
+    tp_range: Tuple[int, int] = (1, 4),
     sl_range: Tuple[int, int] = (1, 4),
     max_holding_period: int = 20,
 ) -> pd.DataFrame:
     """
-    Grid-search pt/sl factor combinations and evaluate label distributions.
+    Grid-search tp/sl factor combinations and evaluate label distributions.
 
     Parameters
     ----------
@@ -158,28 +158,28 @@ def scan_pt_sl_grid(
         Signal matrix with values in {-1, 0, 1}.
     volatility : pd.DataFrame
         Rolling volatility estimates.
-    pt_range : Tuple[int, int], optional
-        Range of pt multipliers to test, by default (1, 4).
+    tp_range : Tuple[int, int], optional
+        Range of take-profit multipliers to test, by default (1, 4).
     sl_range : Tuple[int, int], optional
-        Range of sl multipliers to test, by default (1, 4).
+        Range of stop-loss multipliers to test, by default (1, 4).
     max_holding_period : int, optional
         Maximum holding period in days, by default 20.
 
     Returns
     -------
     pd.DataFrame
-        DataFrame of (pt, sl) vs label proportions.
+        DataFrame of (tp, sl) vs label proportions.
     """
     results: List[Dict] = []
 
-    for pt, sl in itertools.product(
-        range(pt_range[0], pt_range[1] + 1), range(sl_range[0], sl_range[1] + 1)
+    for tp, sl in itertools.product(
+        range(tp_range[0], tp_range[1] + 1), range(sl_range[0], sl_range[1] + 1)
     ):
         labels, _ = apply_triple_barrier(
             prices=prices,
             daily_signals=daily_signals,
             volatility=volatility,
-            pt_sl_factor=(pt, sl),
+            tp_sl_factor=(tp, sl),
             max_holding_period=max_holding_period,
         )
 
@@ -187,7 +187,7 @@ def scan_pt_sl_grid(
 
         results.append(
             {
-                "pt": pt,
+                "tp": tp,
                 "sl": sl,
                 "label_1": label_counts.get(1, 0),
                 "label_0": label_counts.get(0, 0),
@@ -198,14 +198,88 @@ def scan_pt_sl_grid(
 
     results_df = pd.DataFrame(results)
 
-    for label in ["label_1", "label_0", "label_-1"]:
-        pivot = results_df.pivot(index="pt", columns="sl", values=label)
-        plt.figure(figsize=(6, 4))
-        sns.heatmap(pivot, annot=True, cmap="coolwarm")
-        plt.title(f"Proportion of {label}")
-        plt.savefig(config.FIGURES_DIR / f"heatmap_TP_SL_{label}.png")
-        plt.close()
-
-    results_df.to_excel(config.MODELS_DIR / "pt_sl_grid.xlsx")
+    results_df["label_balance"] = abs(results_df["label_1"] - results_df["label_-1"])
+    results_df.sort_values(by=["label_0", "label_balance"], inplace=True)
+    results_df.to_excel(config.FIGURES_DIR / "tp_sl_grid.xlsx")
 
     return results_df
+
+
+def plot_tp_sl_distribution():
+    results_df = pd.read_excel(config.FIGURES_DIR / "tp_sl_grid.xlsx")
+    pivot_label1 = results_df.pivot(index="tp", columns="sl", values="label_1")
+    pivot_label0 = results_df.pivot(index="tp", columns="sl", values="label_0")
+    pivot_label_1 = results_df.pivot(index="tp", columns="sl", values="label_-1")
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Use label_0 as the background color (timeouts)
+    sns.heatmap(pivot_label0, annot=False, fmt=".2f", cmap="coolwarm", cbar=True, ax=ax)
+
+    # Overlay the full label distribution in each cell
+    for i in range(pivot_label0.shape[0]):
+        for j in range(pivot_label0.shape[1]):
+            pt = pivot_label0.index[i]
+            sl = pivot_label0.columns[j]
+            v1 = pivot_label1.loc[pt, sl]
+            v0 = pivot_label0.loc[pt, sl]
+            v_1 = pivot_label_1.loc[pt, sl]
+            text = f"{v1:.0%}\n{v0:.0%}\n{v_1:.0%}"
+            ax.text(j + 0.5, i + 0.5, text, ha="center", va="center", color="black")
+
+    ax.set_title("Label Distribution (PT vs SL)\n[label_1 / label_0 / label_-1]")
+    plt.xlabel("Stop-Loss (SL × σ)")
+    plt.ylabel("Take-Profit (PT × σ)")
+    plt.tight_layout()
+    plt.savefig(config.FIGURES_DIR / "heatmap_TP_SL_combined.png")
+    plt.close()
+
+
+def plot_before_after_label_distribution(
+    tp_sl_old,
+    tp_sl_new,
+    prices: pd.DataFrame,
+    daily_signals: pd.DataFrame,
+    volatility: pd.DataFrame,
+):
+    """
+    Compare label distributions before and after applying a new tp/sl factor.
+
+    Parameters
+    ----------
+    tp_sl_old : Tuple[float, float]
+        Old take-profit and stop-loss factors.
+    tp_sl_new : Tuple[float, float]
+        New take-profit and stop-loss factors.
+    prices : pd.DataFrame
+        Daily price data.
+    daily_signals : pd.DataFrame
+        Signal matrix with values in {-1, 0, 1}.
+    volatility : pd.DataFrame
+        Rolling volatility estimates.
+
+    Returns
+    -------
+    None
+    """
+    labels_old, _ = apply_triple_barrier(
+        prices, daily_signals, volatility, tp_sl_factor=tp_sl_old
+    )
+    labels_new, _ = apply_triple_barrier(
+        prices, daily_signals, volatility, tp_sl_factor=tp_sl_new
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    for ax, labels, title in zip(
+        axes,
+        [labels_old, labels_new],
+        [f"Old Labels (PT/SL={tp_sl_old})", f"New Labels (PT/SL={tp_sl_new})"],
+    ):
+        vc = labels.stack().value_counts(normalize=True).sort_index()
+        vc.plot(kind="bar", ax=ax, color="skyblue", title=title)
+        ax.set_ylim(0, 1)
+        ax.set_ylabel("Proportion")
+
+    plt.tight_layout()
+    plt.savefig("figures/label_distribution_before_after.png")
+    plt.close()
