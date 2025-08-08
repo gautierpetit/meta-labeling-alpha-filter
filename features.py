@@ -451,7 +451,7 @@ def build_meta_features(
     - Market regime context
     - Raw signal direction
     """
-    X_base_scaled = scaler.transform(X_base)
+    X_base_scaled = pd.DataFrame(scaler.transform(X_base), index=X_base.index, columns=X_base.columns)
 
     logger.info("First-stage model predictions.")
     proba_clf = pd.DataFrame(

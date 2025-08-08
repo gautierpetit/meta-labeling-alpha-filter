@@ -60,7 +60,7 @@ FOLD3_START = "2020-01-01"
 FOLD3_END = "2024-12-31"
 
 CV_N_SPLITS = 3  
-RANDOM_SEARCH_ITER = 100  
+RANDOM_SEARCH_ITER = 20  
 CV_SCORING = "neg_log_loss" 
 
 
@@ -83,51 +83,53 @@ HYPERPARAM_RANDOM = {
 }
 
 HYPERPARAM_BAYESIAN = {
-    "n_estimators": Integer(1000, 1800),
-    "learning_rate": Real(0.005, 0.02, prior="log-uniform"),
-    "num_leaves": Integer(80, 180),
-    "max_depth": Integer(50, 80),
-    "min_child_samples": Integer(10, 40),
-    "subsample": Real(0.9, 1.0),
-    "colsample_bytree": Real(0.9, 1.0),
-    "reg_alpha": Real(1e-4, 0.2, prior="log-uniform"),
-    "reg_lambda": Real(1e-4, 0.5, prior="log-uniform"),
-    "scale_pos_weight": Real(1.0, 1.5),
-    "min_split_gain": Real(0.0, 1e-3),
-    "bagging_freq": Integer(0, 3),
+    "n_estimators": Integer(300, 600),
+    "learning_rate": Real(0.01, 0.05, prior="log-uniform"),
+    "num_leaves": Integer(16, 64),
+    "max_depth": Integer(3, 8),
+    "min_child_samples": Integer(20, 60),
+    "subsample": Real(0.8, 1.0),
+    "colsample_bytree": Real(0.8, 1.0),
+    "reg_alpha": Real(1e-4, 0.1, prior="log-uniform"),
+    "reg_lambda": Real(1e-4, 0.1, prior="log-uniform"),
+    "scale_pos_weight": Real(0.9, 1.2),
+    "min_split_gain": Real(0.0, 1e-2),
+    "bagging_freq": Integer(0, 2),
 }
 
-MLPV1_HP_SPACE  = {
-    "units1": [512, 1024, 2048],   
-    "units2": [256, 512, 1024],
-    "units3": [128, 256, 512],
-    "units4": [64, 128, 256],
-    "n_hidden": {"min_value": 3, "max_value": 4, "step": 1}, 
-    "dropout": {"min_value": 0.1, "max_value": 0.3, "step": 0.05},
-    "l2_reg": [1e-6, 1e-5, 1e-4, 1e-3],   
-    "activation": ["relu", "swish", "elu"],
-    "learning_rate": {"min_value": 5e-5, "max_value": 1e-3, "sampling": "log"},
-    "epochs": 150, 
+
+MLPV1_HP_SPACE = {
+    "units1": [1024, 2048],
+    "units2": [512, 1024],
+    "units3": [256, 512],
+    "units4": [128],
+    "units5": [64],
+    "n_hidden": {"min_value": 3, "max_value": 5, "step": 1},
+    "dropout": {"min_value": 0.0, "max_value": 0.2, "step": 0.1},
+    "l2_reg": [0.0, 1e-5],
+    "activation": ["relu"],
+    "learning_rate": {"min_value": 1e-4, "max_value": 1e-3, "sampling": "log"},
+    "epochs": 80,
     "batch_size": 8192,
-    "max_trials": 50,  
-    "batch_norm": True, 
+    "max_trials": 15,
+    "batch_norm": True,
 }
+
 
 
 MLPV2_HP_SPACE = {
-    "units1": [512, 1024],             
-    "units2": [256, 512],
-    "units3": [128, 256],
-    "units4": [64, 128],
-    "n_hidden": {"min_value": 3, "max_value": 4, "step": 1},  
-    "dropout": {"min_value": 0.0, "max_value": 0.10, "step": 0.05},
-    "l2_reg": [0.0, 1e-6],         
-    "activation": ["swish", "relu"],    
-    "learning_rate": {"min_value": 1e-4, "max_value": 3e-3, "sampling": "log"},  
-    "epochs": 100, 
+    "units1": [256, 512],
+    "units2": [128],
+    "units3": [64],
+    "n_hidden": {"min_value": 2, "max_value": 3, "step": 1},
+    "dropout": {"min_value": 0.0, "max_value": 0.1, "step": 0.05},
+    "l2_reg": [0.0],
+    "activation": ["relu"],
+    "learning_rate": {"min_value": 1e-6, "max_value": 5e-4, "sampling": "log"},
+    "epochs": 60,
     "batch_size": 8192,
-    "max_trials": 40, 
-    "batch_norm": False, 
+    "max_trials": 12,
+    "batch_norm": False,
 }
 
 

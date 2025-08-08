@@ -17,8 +17,7 @@ from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
 
 import config
-from data_loader import load_features, load_labels
-from modeling import evaluate_model, scale_features, split_train_test
+from modeling import scale_features
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +118,6 @@ def mlp_nested_cv(
     y_int = Y.map(config.LABEL_MAP).values
     input_dim = X.shape[1]
 
-    X, scaler = scale_features(X, return_scaler=True)
-
     outer_cv = TimeSeriesSplit(
         n_splits=config.CV_N_SPLITS, gap=config.MAX_HOLDING_PERIOD
     )
@@ -134,7 +131,10 @@ def mlp_nested_cv(
     for fold, (train_idx, val_idx) in enumerate(outer_cv.split(X), 1):
         logger.info(f"\nOuter Fold {fold}/{config.CV_N_SPLITS}")
 
-        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        X_train_raw, X_val_raw = X.iloc[train_idx], X.iloc[val_idx]
+        X_train, fold_scaler = scale_features(X_train_raw, return_scaler=True)
+        X_val = pd.DataFrame(fold_scaler.transform(X_val_raw), index=X_val_raw.index, columns=X_val_raw.columns)
+
         y_train_int, y_val_int = y_int[train_idx], y_int[val_idx]
 
         def model_builder(hp):
@@ -213,7 +213,7 @@ def mlp_nested_cv(
     best_fold = np.argmax(auc_scores)
     best_fold_hp = fold_hparams[best_fold]
 
-    model = train_MLP(X, Y, best_fold_hp, input_dim, project_name=project_name)
+    model, final_scaler = train_MLP(X, Y, best_fold_hp, input_dim, project_name=project_name)
     filename = config.MODELS_DIR / f"{project_name}.pkl"
     model.save(filename)
 
@@ -227,7 +227,7 @@ def mlp_nested_cv(
         f"\nModel saved to: {filename}"
     )
 
-    return model, scaler, best_fold_hp, acc_scores, auc_scores, ll_scores, fold_hparams
+    return model, final_scaler, best_fold_hp, acc_scores, auc_scores, ll_scores, fold_hparams
 
 
 def train_MLP(
@@ -235,6 +235,8 @@ def train_MLP(
 ) -> Sequential:
     y_int = Y.map(config.LABEL_MAP).values  
     hp_space = config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
+
+    X_scaled, final_scaler = scale_features(X, return_scaler=True)
 
     model = build_model(best_hp, input_dim)
     train_ds = make_dataset(
@@ -247,7 +249,7 @@ def train_MLP(
         verbose=0,
     )
 
-    return model
+    return model, final_scaler
 
 
 class KerasSoftmaxWrapper:
@@ -271,24 +273,3 @@ class KerasSoftmaxWrapper:
         indices = np.argmax(proba, axis=1)
         return np.array([self.class_labels_[i] for i in indices])
 
-
-def main():
-    logger.info("=== 4. Load and prepare meta-modeling data ===")
-    X_scaled = scale_features(load_features())
-    Y = load_labels().squeeze()
-    X_train_scaled, Y_train, X_test_scaled, Y_test = split_train_test(X_scaled, Y)
-
-    logger.info("=== MPL training, hyperparm tuning with nested CV ===")
-    clf, best_fold_hp, scores, hparams = mlp_nested_cv(
-        X_train_scaled, Y_train, "Bayesian"
-    )
-    acc, auc, ll = evaluate_model(clf, X_test_scaled, Y_test)
-    logger.info(
-        f"\nTest Accuracy: {acc:.4f}"
-        "\nTest ROC AUC: {auc:.4f}"
-        "\nTest Log loss: {ll:.4f}"
-    )
-
-
-if __name__ == "__main__":
-    main()

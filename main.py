@@ -21,7 +21,7 @@ from time import time
 import joblib
 import tensorflow as tf
 from keras.models import load_model
-
+import pandas as pd
 import config
 from config_private import NTFY_SERVER
 from data_loader import (
@@ -115,8 +115,6 @@ def main():
 
     mlp_v1 = KerasSoftmaxWrapper(mlp_v1t, label_map=config.LABEL_MAP, scaler=scaler)
 
-    joblib.dump(mlp_v1, config.MLPV1)
-    # mlp_v1 = joblib.load(config.MLPV1)
 
     logging.info("=== 7. Generate Meta-features ===")
 
@@ -142,8 +140,7 @@ def main():
         mlp_v2t, label_map=config.LABEL_MAP, scaler=scaler_meta
     )
 
-    joblib.dump(mlp_v2, config.MLPV2)
-    # mlp_v2 = joblib.load(config.MLPV2)
+
 
     logging.info("=== 9. Classifier Analysis ===")
     shap_explain(model=clf, X_test=X_fold2, name="CLF")
@@ -151,16 +148,17 @@ def main():
     evaluate_model(clf_cal, X_fold2, Y_fold2, "CLF")
 
     logging.info("=== 10. MLP Analysis ===")
-    X_fold2_scaled = scaler.transform(X_fold2)
-    X_fold3_scaled = scaler.transform(X_fold3)
+    X_fold1_scaled = pd.DataFrame(scaler.transform(X_fold1), index=X_fold1.index, columns=X_fold1.columns)
+    X_fold2_scaled = pd.DataFrame(scaler.transform(X_fold2), index=X_fold2.index, columns=X_fold2.columns)
 
-    shap_values_v1 = shap_explain(model=mlp_v1t, X_test=X_fold2_scaled, X_train=X_fold3_scaled, name="MLPV1T")
+
+    shap_values_v1 = shap_explain(model=mlp_v1t, X_test=X_fold2_scaled, X_train=X_fold1_scaled, name="MLPV1T")
     feature_importance(model=mlp_v1t, shap_values=shap_values_v1, X_test=X_fold2_scaled, name="MLPV1")
     evaluate_model(mlp_v1, X_fold2, Y_fold2, "MLPV1")
 
     logging.info("=== 11. Meta MLP Analysis ===")
-    X_meta_f2_scaled = scaler_meta.transform(X_meta_f2)
-    X_meta_f3_scaled = scaler_meta.transform(X_meta_f3)
+    X_meta_f2_scaled = pd.DataFrame(scaler_meta.transform(X_meta_f2), index=X_meta_f2.index, columns=X_meta_f2.columns)
+    X_meta_f3_scaled = pd.DataFrame(scaler_meta.transform(X_meta_f3), index=X_meta_f3.index, columns=X_meta_f3.columns)
 
     shap_values_v2 = shap_explain(model=mlp_v2t, X_test=X_meta_f3_scaled, X_train=X_meta_f2_scaled, name="MLPV2T")
     feature_importance(model=mlp_v2t, shap_values=shap_values_v2, X_test=X_meta_f3_scaled, name="MLPV2")
