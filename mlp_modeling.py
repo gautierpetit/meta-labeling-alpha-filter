@@ -260,8 +260,9 @@ class KerasSoftmaxWrapper:
         self.scaler = scaler
 
     def predict_proba(self, X):
-        if self.scaler:
-            X = pd.DataFrame(self.scaler.transform(X), index=X.index, columns=X.columns)
+        if self.scaler is None:
+            raise ValueError("Scaler not found. Ensure model was trained with consistent scaling.")
+        X = pd.DataFrame(self.scaler.transform(X), index=X.index, columns=X.columns)
         logits = self.model.predict(X)
         return tf.nn.softmax(logits, axis=1).numpy()
 

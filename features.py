@@ -3,6 +3,7 @@ from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
+from sklearn.discriminant_analysis import StandardScaler
 import ta
 from tqdm import tqdm
 
@@ -437,9 +438,11 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
 
 def build_meta_features(
     X_base: pd.DataFrame,
+    scaler: StandardScaler,
     daily_signals: pd.DataFrame,
     base_model_lgbm,
     base_model_mlp,
+    
 ) -> pd.DataFrame:
     """
     Build meta features using:
@@ -448,7 +451,7 @@ def build_meta_features(
     - Market regime context
     - Raw signal direction
     """
-    X_base_scaled = scale_features(X_base)
+    X_base_scaled = scaler.transform(X_base)
 
     logger.info("First-stage model predictions.")
     proba_clf = pd.DataFrame(
@@ -489,40 +492,6 @@ def build_meta_features(
         (proba_clf["proba_clf_1"] + proba_mlp["proba_mlp_1"]) / 2
     ).rename("confidence_mean")
 
-    logger.info("Market context features.")
-    dates = X_base.index.get_level_values("Date").unique()
-    tickers = X_base.index.get_level_values("Ticker").unique()
-    index = pd.MultiIndex.from_product([dates, tickers], names=["date", "ticker"])
-
-    vix = load_vix().reindex(dates).ffill()
-    rates = load_rates().reindex(dates).ffill()
-    month_of_year_sin = np.sin(2 * np.pi * dates.month / 12)
-
-    
-    vix_feature = pd.Series(
-        np.repeat(vix.values, len(tickers)), index=index, name="vix"
-    )
-    vix_high = pd.Series(
-        np.repeat((vix > 25).astype(int).values, len(tickers)), index=index, name="vix_high"
-    )
-    ten_year = pd.Series(
-        np.repeat(rates["DGS10"].values, len(tickers)), index=index, name="10yTbill"
-    )
-    ten_year_minus = pd.Series(
-        np.repeat(rates["T10Y3M"].values, len(tickers)),
-        index=index,
-        name="10yTbill_minus3m",
-    )
-    inversion = pd.Series(
-        np.repeat((rates["T10Y3M"] < 0).astype(int).values, len(tickers)),
-        index=index,
-        name="yc_inversion",
-    )
-    month_sin_feature = pd.Series(
-        np.repeat(month_of_year_sin.values, len(tickers)),
-        index=index,
-        name="month_of_year_sin",
-    )
 
     logger.info("Combining features.")
     feature_frames = [
@@ -535,12 +504,14 @@ def build_meta_features(
         model_agreement,
         confidence_agreement,
         confidence_mean,
-        vix_feature.loc[X_base.index],
-        vix_high.loc[X_base.index],
-        ten_year.loc[X_base.index],
-        ten_year_minus.loc[X_base.index],
-        inversion.loc[X_base.index],
-        month_sin_feature.loc[X_base.index],
+        X_base["vix"].loc[X_base.index],
+        X_base["volatility_zscore"].loc[X_base.index],
+        X_base["volatility_20d"].loc[X_base.index],
+        X_base["vix_high"].loc[X_base.index],
+        X_base["10yTbill"].loc[X_base.index],
+        X_base["yield_curve_slope"].loc[X_base.index],
+        X_base["yc_inversion"].loc[X_base.index],
+        X_base["month_of_year_sin"].loc[X_base.index],
         daily_signals.stack().reindex_like(X_base).rename("raw_signal_direction"),
     ]
 
