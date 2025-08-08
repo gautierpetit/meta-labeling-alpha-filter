@@ -238,9 +238,9 @@ def train_MLP(
 
     X_scaled, final_scaler = scale_features(X, return_scaler=True)
 
-    model = build_model(best_hp, input_dim)
+    model = build_model(best_hp, input_dim, project_name=project_name)
     train_ds = make_dataset(
-        X.values, y_int, batch_size=hp_space["batch_size"]
+        X_scaled.values, y_int, batch_size=hp_space["batch_size"]
     )
     model.fit(
         train_ds,
