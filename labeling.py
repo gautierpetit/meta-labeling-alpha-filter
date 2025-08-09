@@ -48,7 +48,7 @@ def apply_triple_barrier(
             entry_price = prices.at[date, ticker]
             vol = volatility.at[date, ticker]
 
-            if pd.isna(entry_price) or pd.isna(vol):
+            if pd.isna(entry_price) or pd.isna(vol) or vol == 0:
                 continue
 
             tp_level, sl_level = calculate_barrier_levels(

@@ -83,60 +83,60 @@ HYPERPARAM_RANDOM = {
 }
 
 HYPERPARAM_BAYESIAN = {
-    "n_estimators": Integer(300, 600),
-    "learning_rate": Real(0.01, 0.05, prior="log-uniform"),
-    "num_leaves": Integer(16, 64),
-    "max_depth": Integer(3, 8),
-    "min_child_samples": Integer(20, 60),
-    "subsample": Real(0.8, 1.0),
-    "colsample_bytree": Real(0.8, 1.0),
-    "reg_alpha": Real(1e-4, 0.1, prior="log-uniform"),
-    "reg_lambda": Real(1e-4, 0.1, prior="log-uniform"),
-    "scale_pos_weight": Real(0.9, 1.2),
-    "min_split_gain": Real(0.0, 1e-2),
+    # Better capacity but bounded runtime
+    "n_estimators": Integer(300, 700),
+    "learning_rate": Real(0.008, 0.06, prior="log-uniform"),
+    "num_leaves": Integer(31, 127),
+    "max_depth": Integer(7, 12),
+    "min_child_samples": Integer(20, 80),
+    "subsample": Real(0.7, 1.0),
+    "colsample_bytree": Real(0.6, 1.0),
+    "reg_alpha": Real(1e-5, 1e-1, prior="log-uniform"),
+    "reg_lambda": Real(1e-5, 1e-1, prior="log-uniform"),
+    "scale_pos_weight": Real(0.9, 1.5),
+    "min_split_gain": Real(1e-6, 1e-2, prior="log-uniform"),
     "bagging_freq": Integer(0, 2),
 }
 
-
 MLPV1_HP_SPACE = {
-    "units1": [1024, 2048],
-    "units2": [512, 1024],
-    "units3": [256, 512],
-    "units4": [128],
-    "units5": [64],
+    # More expressive than before but faster than very-wide nets
+    "units1": [512, 1024, 1536],
+    "units2": [256, 512, 768],
+    "units3": [128, 256, 384],
+    "units4": [64, 128],
+    "units5": [32, 64],
     "n_hidden": {"min_value": 3, "max_value": 5, "step": 1},
-    "dropout": {"min_value": 0.0, "max_value": 0.2, "step": 0.1},
-    "l2_reg": [0.0, 1e-5],
+    "dropout": {"min_value": 0.0, "max_value": 0.15, "step": 0.05},
+    "l2_reg": [0.0, 1e-6, 5e-6, 1e-5, 5e-5],
     "activation": ["relu"],
-    "learning_rate": {"min_value": 1e-4, "max_value": 1e-3, "sampling": "log"},
-    "epochs": 80,
-    "batch_size": 8192,
-    "max_trials": 15,
+    "learning_rate": {"min_value": 1e-7, "max_value": 1e-4, "sampling": "log"},
+    "epochs": 100,
+    "class_weight": {0: 0.8963260312726995, 1: 1.361415000116136, 2: 0.8697129545134175},
+    "batch_size": 4096,
+    "max_trials": 12,
     "batch_norm": True,
 }
 
-
-
 MLPV2_HP_SPACE = {
-    "units1": [256, 512],
-    "units2": [128],
-    "units3": [64],
+    # Slightly larger head than before; still light
+    "units1": [96, 128, 192, 256],
+    "units2": [48, 64, 96, 128],
+    "units3": [24, 32, 48, 64],
+    "units4": [16, 24, 32],
     "n_hidden": {"min_value": 2, "max_value": 3, "step": 1},
-    "dropout": {"min_value": 0.0, "max_value": 0.1, "step": 0.05},
-    "l2_reg": [0.0],
+    "dropout": {"min_value": 0.0, "max_value": 0.30, "step": 0.05},
+    "l2_reg": [0.0, 1e-6, 5e-6, 1e-5],
     "activation": ["relu"],
-    "learning_rate": {"min_value": 1e-6, "max_value": 5e-4, "sampling": "log"},
+    "learning_rate": {"min_value": 1e-7, "max_value": 1e-4, "sampling": "log"},
     "epochs": 60,
-    "batch_size": 8192,
-    "max_trials": 12,
+    "class_weight": {0: 0.9019218562186837, 1: 1.3774958745874588, 2: 0.8581470059110768},
+    "batch_size": 4096,
+    "max_trials": 10,
     "batch_norm": False,
 }
 
-
-
 NN_TRAINING_PARAMS = {
-
-    "early_stopping_patience": 15,
+    "early_stopping_patience": 8,   # slightly tighter to save time
     "early_stopping_min_delta": 1e-4,
 }
 
@@ -146,14 +146,14 @@ NN_TRAINING_PARAMS = {
 LONG_SIDE_TC = 0.001  # 10 bps
 SHORT_SIDE_TC = 0.002  # 20 bps
 
-LONG_ONLY = False # Requires retraining
+LONG_ONLY = False  # Requires retraining
 LOGIC = "NORMAL"  # "NORMAL" or "INVERTED"
-PROB_WEIGHTING = False  # Use model probabilities to weight signals
+PROB_WEIGHTING = True  # Use model probabilities to weight signals
 TARGET_VOL = -1  # -1 to turn off volatility targeting
 VOL_SPAN = 20
 LEVERAGE_CAP = -1  # -1 to turn off leverage cap
-META_PROBA_THRESHOLD = 0.6  # 0.45
-MIN_GAP = 0.3  # Minimum gap between long and short probabilities to consider a signal valid
+META_PROBA_THRESHOLD = 0.5 # 0.45
+MIN_GAP = 0.2  # Minimum gap between long and short probabilities to consider a signal valid
 
 # === OUTPUT FILES ===
 MISSING_DATA_REPORT = DATA_DIR / "missing_count.xlsx"
@@ -161,8 +161,6 @@ TICKER_AVAILABILITY_REPORT = DATA_DIR / "ticker_availability.xlsx"
 PERFORMANCE_SUMMARY_XLSX = RESULTS_DIR / "performance_summary.xlsx"
 CLF_PATH = MODELS_DIR / "clf.pkl"
 CLF_CAL_PATH = MODELS_DIR / "clf_cal.pkl"
-MLPV1T = MODELS_DIR / "mlpv1t.pkl"
-MLPV1 = MODELS_DIR / "mlpv1.pkl"
-MLPV2T = MODELS_DIR / "mlpv2t.pkl"
-MLPV2 = MODELS_DIR / "mlpv2.pkl"
-CV_MODELS = MODELS_DIR / "cv_models.pkl"
+MLPV1T = MODELS_DIR / "mlpv1t.keras"
+MLPV2T = MODELS_DIR / "mlpv2t.keras"
+

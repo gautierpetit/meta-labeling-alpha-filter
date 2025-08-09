@@ -3,7 +3,7 @@ from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.discriminant_analysis import StandardScaler
+from sklearn.preprocessing import StandardScaler
 import ta
 from tqdm import tqdm
 
@@ -406,11 +406,7 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
         .apply(lambda g: g.ffill(limit=10))
         .reset_index(level=0, drop=True)
     )
-    X = (
-        X.groupby(level=1)
-        .apply(lambda g: g.bfill(limit=5))
-        .reset_index(level=0, drop=True)
-    )
+
     # Safe fallback for sparse leftovers
     X = X.fillna(X.median())
     # Sort for consistency with Y
@@ -436,22 +432,17 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
     return X, Y, label_times
 
 
+
 def build_meta_features(
     X_base: pd.DataFrame,
     scaler: StandardScaler,
-    daily_signals: pd.DataFrame,
     base_model_lgbm,
     base_model_mlp,
     
 ) -> pd.DataFrame:
     """
-    Build meta features using:
-    - First-stage model predictions
-    - Meta-level engineered features
-    - Market regime context
-    - Raw signal direction
+    Build meta-features for stacking. Expect base_model_mlp to be a wrapper that internally scales.
     """
-    X_base_scaled = pd.DataFrame(scaler.transform(X_base), index=X_base.index, columns=X_base.columns)
 
     logger.info("First-stage model predictions.")
     proba_clf = pd.DataFrame(
@@ -460,7 +451,7 @@ def build_meta_features(
         columns=[f"proba_clf_{cls}" for cls in base_model_lgbm.classes_],
     )
     proba_mlp = pd.DataFrame(
-        base_model_mlp.predict_proba(X_base_scaled),
+        base_model_mlp.predict_proba(X_base),
         index=X_base.index,
         columns=[f"proba_mlp_{cls}" for cls in base_model_mlp.class_labels_],
     )
@@ -468,7 +459,7 @@ def build_meta_features(
         base_model_lgbm.predict(X_base), index=X_base.index, columns=["clf_pred"]
     )
     mlp_pred = pd.DataFrame(
-        base_model_mlp.predict(X_base_scaled), index=X_base.index, columns=["mlp_pred"]
+        base_model_mlp.predict(X_base), index=X_base.index, columns=["mlp_pred"]
     )
 
     logger.info("Engineering meta features.")
@@ -512,7 +503,6 @@ def build_meta_features(
         X_base["yield_curve_slope"].loc[X_base.index],
         X_base["yc_inversion"].loc[X_base.index],
         X_base["month_of_year_sin"].loc[X_base.index],
-        daily_signals.stack().reindex_like(X_base).rename("raw_signal_direction"),
     ]
 
     X_meta = pd.concat(feature_frames, axis=1)

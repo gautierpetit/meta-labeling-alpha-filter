@@ -16,7 +16,7 @@ def get_daily_signals(
     long_only: bool = config.LONG_ONLY,
     hold_months: int = 3,
     skip_months: int = 1,
-) -> tuple[pd.DataFrame, pd.MultiIndex]:
+) -> pd.DataFrame:
     """
     Generate daily trading signals based on monthly momentum ranking.
     Can return long-only or long-short signals.
@@ -36,8 +36,8 @@ def get_daily_signals(
 
     Returns
     -------
-    tuple[pd.DataFrame, pd.MultiIndex]
-        Signal matrix (-1, 0, 1 values) and MultiIndex of (date, ticker) with active signals.
+    pd.DataFrame
+        Signal matrix (-1, 0, 1 values)
     """
     logger.info("Generating daily trading signals.")
 

@@ -552,7 +552,7 @@ def compute_pnl_per_trade(
     stacked_returns = returns.stack()
 
     # Filter only the entry signals
-    entry_signals = stacked_signals[stacked_signals == 1]
+    entry_signals = stacked_signals[stacked_signals != 0]
 
     pnl_list = []
     trade_keys = []

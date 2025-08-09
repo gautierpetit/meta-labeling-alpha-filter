@@ -14,8 +14,9 @@ from keras.optimizers import Adam
 from keras.regularizers import l2
 from keras_tuner import Objective
 from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
-from sklearn.model_selection import TimeSeriesSplit
-
+from sklearn.model_selection import TimeSeriesSplit, train_test_split
+from sklearn.preprocessing import StandardScaler
+from analysis import plot_learning_curve, save_history
 import config
 from modeling import scale_features
 
@@ -109,6 +110,12 @@ def build_model(hp: kt.HyperParameters, input_dim: int, project_name="mlp") -> S
     return model
 
 
+def _safe_transform(scaler: StandardScaler, X: pd.DataFrame) -> pd.DataFrame:
+    if hasattr(scaler, "feature_names_in_"):
+        X = X.reindex(columns=scaler.feature_names_in_, fill_value=0.0)
+    Xt = scaler.transform(X)
+    return pd.DataFrame(Xt, index=X.index, columns=X.columns)
+
 def mlp_nested_cv(
     X: pd.DataFrame,
     Y: pd.Series,
@@ -121,10 +128,7 @@ def mlp_nested_cv(
     outer_cv = TimeSeriesSplit(
         n_splits=config.CV_N_SPLITS, gap=config.MAX_HOLDING_PERIOD
     )
-    acc_scores = []
-    auc_scores = []
-    ll_scores = []
-    fold_hparams = []
+    acc_scores, auc_scores, ll_scores, hparams_all = [], [], [], []
 
     hp_space = config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
 
@@ -132,10 +136,11 @@ def mlp_nested_cv(
         logger.info(f"\nOuter Fold {fold}/{config.CV_N_SPLITS}")
 
         X_train_raw, X_val_raw = X.iloc[train_idx], X.iloc[val_idx]
-        X_train, fold_scaler = scale_features(X_train_raw, return_scaler=True)
-        X_val = pd.DataFrame(fold_scaler.transform(X_val_raw), index=X_val_raw.index, columns=X_val_raw.columns)
-
         y_train_int, y_val_int = y_int[train_idx], y_int[val_idx]
+
+        # Fit scaler on training split only
+        X_train_scaled, fold_scaler = scale_features(X_train_raw, return_scaler=True)
+        X_val_scaled = _safe_transform(fold_scaler, X_val_raw)
 
         def model_builder(hp):
             return build_model(hp, input_dim, project_name=project_name)
@@ -151,40 +156,33 @@ def mlp_nested_cv(
             executions_per_trial=1,
             directory=f"kt/fold_{fold}",
             project_name=project_name,
-            overwrite=False,
+            overwrite=True,
             seed=config.RANDOM_STATE,
         )
 
         train_ds = make_dataset(
-            X_train.values,
+            X_train_scaled.values,
             y_train_int,
             batch_size=hp_space["batch_size"],
         )
         val_ds = make_dataset(
-            X_val.values,
+            X_val_scaled.values,
             y_val_int,
             batch_size=hp_space["batch_size"],
             )
         tuner.search(
             train_ds,
-            validation_data=val_ds,  # Provide validation dataset here
+            validation_data=val_ds,  
             epochs=hp_space["epochs"],
             verbose=0,
         )
 
         best_hp = tuner.get_best_hyperparameters(1)[0]
         best_model = tuner.hypermodel.build(best_hp)
-        fold_hparams.append(best_hp)
+        hparams_all.append(best_hp)
 
-        early_stop = EarlyStopping(
-            monitor="loss",
-            patience=config.NN_TRAINING_PARAMS["early_stopping_patience"],
-            min_delta=config.NN_TRAINING_PARAMS["early_stopping_min_delta"],
-            restore_best_weights=True,
-            verbose=0,
-        )
 
-        best_model.fit(
+        history = best_model.fit(
             train_ds,
             validation_data=val_ds,
             epochs=hp_space["epochs"],
@@ -192,7 +190,11 @@ def mlp_nested_cv(
             verbose=0,
         )
 
-        logits = best_model.predict(X_val, verbose=0)
+        fold_tag = f"{project_name}_fold{fold}"
+        plot_learning_curve(history, name=fold_tag)
+        save_history(history, name=fold_tag)
+
+        logits = best_model.predict(X_val_scaled.values, verbose=0)
         y_proba = tf.nn.softmax(logits, axis=1).numpy()
 
         y_pred = np.argmax(y_proba, axis=1)
@@ -211,10 +213,10 @@ def mlp_nested_cv(
         logger.info(f"\nBest HPs: {best_hp.values}")
 
     best_fold = np.argmax(auc_scores)
-    best_fold_hp = fold_hparams[best_fold]
+    best_fold_hp = hparams_all[best_fold]
 
     model, final_scaler = train_MLP(X, Y, best_fold_hp, input_dim, project_name=project_name)
-    filename = config.MODELS_DIR / f"{project_name}.pkl"
+    filename = config.MODELS_DIR / f"{project_name}.keras"
     model.save(filename)
 
     logger.info(
@@ -227,7 +229,7 @@ def mlp_nested_cv(
         f"\nModel saved to: {filename}"
     )
 
-    return model, final_scaler, best_fold_hp, acc_scores, auc_scores, ll_scores, fold_hparams
+    return model, final_scaler, best_fold_hp, acc_scores, auc_scores, ll_scores, hparams_all
 
 
 def train_MLP(
@@ -238,16 +240,22 @@ def train_MLP(
 
     X_scaled, final_scaler = scale_features(X, return_scaler=True)
 
-    model = build_model(best_hp, input_dim)
+    model = build_model(best_hp, input_dim, project_name=project_name)
     train_ds = make_dataset(
-        X.values, y_int, batch_size=hp_space["batch_size"]
+        X_scaled.values, y_int, batch_size=hp_space["batch_size"]
     )
-    model.fit(
+
+    history = model.fit(
         train_ds,
+        class_weight=hp_space["class_weight"],
         epochs=hp_space["epochs"],
         callbacks=[early_stop],
         verbose=0,
     )
+
+    model_tag = f"{project_name}_final"
+    plot_learning_curve(history, name=model_tag)
+    save_history(history, name=model_tag)
 
     return model, final_scaler
 
@@ -264,8 +272,8 @@ class KerasSoftmaxWrapper:
     def predict_proba(self, X):
         if self.scaler is None:
             raise ValueError("Scaler not found. Ensure model was trained with consistent scaling.")
-        X = pd.DataFrame(self.scaler.transform(X), index=X.index, columns=X.columns)
-        logits = self.model.predict(X)
+        X_t = _safe_transform(self.scaler, X)
+        logits = self.model.predict(X_t.values, verbose=0)
         return tf.nn.softmax(logits, axis=1).numpy()
 
     def predict(self, X):

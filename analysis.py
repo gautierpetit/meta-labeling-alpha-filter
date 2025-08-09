@@ -44,28 +44,30 @@ def shap_explain(
     Raises:
         ValueError: If `X_train` is not provided for deep models.
     """
+    X_explain = X_test.sample(1000, random_state=config.RANDOM_STATE)
+    
     if hasattr(model, "classes_"):  # sklearn-like model
         explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_test.values)
+        shap_values = explainer.shap_values(X_explain.values)
     else:  # Deep learning model
         if X_train is None:
             raise ValueError("Background dataset required for deep models.")
         background = X_train.sample(100, random_state=config.RANDOM_STATE)
         explainer = shap.DeepExplainer(model, background.values)
-        shap_values = explainer.shap_values(X_test.values, check_additivity=False)
+        shap_values = explainer.shap_values(X_explain.values, check_additivity=False)
 
     # Save SHAP values and generate summary plots
     for class_idx in range(shap_values.shape[2]):
         # Shap summary plot
         shap.summary_plot(
             shap_values[:, :, class_idx],
-            X_test,
+            X_explain,
             show=False,
             class_names=[f"Class {class_idx}"],
         )
         plt.title(f"SHAP Summary Plot for {name} - Class {class_idx}")
         plt.gcf().tight_layout()
-        output_path = config.SHAP_VALUES_DIR / f"summary_{name}_class_{class_idx}.png"
+        output_path = config.SHAP_VALUES_DIR / "summaries" / f"summary_{name}_class_{class_idx}.png"
         plt.savefig(output_path, bbox_inches="tight")
         plt.close()
         logger.info(f"SHAP summary plot saved to: {output_path}")
@@ -74,10 +76,10 @@ def shap_explain(
         class_df = pd.DataFrame(
             shap_values[:, :, class_idx],
             columns=X_test.columns,
-            index=X_test.index,
+            index=X_explain.index,
         )
         output_path = (
-            config.SHAP_VALUES_DIR / f"values_{name}_class_{class_idx}.parquet"
+            config.SHAP_VALUES_DIR / "values" / f"values_{name}_class_{class_idx}.parquet"
         )
         class_df.to_parquet(output_path)
         logger.info(f"SHAP values saved to: {output_path}")
@@ -107,32 +109,21 @@ def feature_importance(
         raw_importance = pd.Series(
             data=model.feature_importances_, index=X_test.columns
         )
-        method = "lightgbm"
     else:
         avg_across_classes = np.mean(np.abs(shap_values), axis=2)
         mean_abs_shap = np.mean(avg_across_classes, axis=0)
         raw_importance = pd.Series(mean_abs_shap, index=X_test.columns)
-        method = "shap"
 
     importance = raw_importance / raw_importance.sum()
     importance = importance.sort_values(ascending=False)
     logger.info(f"Feature importance: \n{importance * 100}")
 
-    # Save to CSV
-    path_csv = config.RESULTS_DIR / f"feature_importance_{name}.csv"
-    importance.to_csv(path_csv, header=["importance"])
-    logger.info(f"[{name}] Feature importance saved to: {path_csv}")
+    # Save to Excel
+    path = config.RESULTS_DIR / "feature_importance" / f"feature_importance_{name}.xlsx"
+    importance.to_excel(path, header=["importance"])
+    logger.info(f"[{name}] Feature importance saved to: {path}")
 
-    # Plot
-    plt.figure(figsize=(10, min(12, 0.35 * len(importance))))
-    importance.head(30).iloc[::-1].plot(kind="barh", color="steelblue")
-    plt.title(f"Top Features: {name} ({method})")
-    plt.xlabel("Relative Importance")
-    plt.tight_layout()
-    path_fig = config.FIGURES_DIR / f"feature_importance_{name}.png"
-    plt.savefig(path_fig)
-    plt.close()
-    logger.info(f"[{name}] Feature importance plot saved to: {path_fig}")
+
 
 
 def evaluate_model(
@@ -173,7 +164,7 @@ def evaluate_model(
         display_labels=["-1", "0", "1"],
     )
     disp.plot()
-    plt.savefig(config.FIGURES_DIR / f"confusion_matrix_{name}.png")
+    plt.savefig(config.FIGURES_DIR / "confusion_matrices" / f"confusion_matrix_{name}.png")
     plt.close()
 
     # Save classification report to JSON
@@ -184,7 +175,10 @@ def evaluate_model(
         output_dict=True,
         zero_division=0,
     )
-    json_path = config.RESULTS_DIR / f"classification_report_{name}.json"
+    report_dict["accuracy"] = acc
+    report_dict["roc_auc"] = auc
+    report_dict["log_loss"] = logloss
+    json_path = config.RESULTS_DIR / "classification_reports" / f"classification_report_{name}.json"
     with open(json_path, "w") as f:
         json.dump(report_dict, f, indent=4)
 
@@ -216,10 +210,8 @@ def evaluate_model(
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig(
-            config.FIGURES_DIR
-            / f"calibration_curve_{name}_class_{['-1', '0', '1'][class_idx]}.png"
-        )
+        path = config.FIGURES_DIR / "calibration_curves" / f"calibration_curve_{name}_class_{['-1', '0', '1'][class_idx]}.png"
+        plt.savefig(path)
         plt.close()
 
         logger.info(
@@ -228,3 +220,34 @@ def evaluate_model(
         logger.info(
             f"Actual proportion in Y_test: {(y_true == class_label).mean():.4f}"
         )
+
+
+
+def plot_learning_curve(history, name: str, save: bool = True):
+    """
+    Plot training/validation loss over epochs from a Keras History.
+    """
+    if history is None or not hasattr(history, "history") or not history.history:
+        return
+
+    hist = pd.DataFrame(history.history)
+    plt.figure(figsize=(8, 5))
+    plt.plot(hist["loss"], label="loss")
+    if "val_loss" in hist:
+        plt.plot(hist["val_loss"], label="val_loss")
+    plt.title(f"Learning Curve – {name}")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    if save:
+        path = config.FIGURES_DIR / "learning_curves" / f"learning_curve_{name}.png"
+        plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+def save_history(history, name: str):
+    if history is None or not hasattr(history, "history") or not history.history:
+        return
+    df = pd.DataFrame(history.history)
+    path = config.FIGURES_DIR / "learning_curves" / f"learning_curve_{name}.xlsx"
+    df.to_excel(path, index=False)

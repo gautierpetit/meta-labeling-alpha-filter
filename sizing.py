@@ -38,6 +38,8 @@ def compute_probability_weighted_returns(
 
         weighted = signal_values * success_probs
         weights = pd.Series(weighted, index=X_test.index).unstack().reindex_like(filtered_signals).fillna(0.0)
+        row_sums = weights.abs().sum(axis=1).replace(0, np.nan)
+        weights = weights.div(row_sums, axis=0).fillna(0.0)
 
         """
         EXPERIMENTAL: softening a trade based on the model’s uncertainty
@@ -68,10 +70,12 @@ def compute_probability_weighted_returns(
 
     # Vol targeting
     raw_returns = (returns * weights).sum(axis=1)
+
     realized_vol = raw_returns.ewm(span=config.VOL_SPAN).std() * np.sqrt(252)
     if target_vol != -1:
-        scaling = target_vol / realized_vol
-        weights = weights.mul(scaling, axis=0)
+        rv = realized_vol.shift(1).replace(0, np.nan)
+        scaling = (target_vol / rv).clip(lower=0, upper=10)
+        weights = weights.mul(scaling, axis=0).fillna(0.0)
 
     # Leverage cap
     leverage = weights.abs().sum(axis=1).replace(0, np.nan)
@@ -85,12 +89,12 @@ def compute_probability_weighted_returns(
     long_tc = config.LONG_SIDE_TC  # e.g., 0.001
     short_tc = config.SHORT_SIDE_TC  # e.g., 0.002 or 0.003
 
-    diff = weights.diff().abs()
 
-    costs = (
-        diff[weights > 0].sum(axis=1) * long_tc
-        + diff[weights < 0].sum(axis=1) * short_tc
-    )
+    w_prev = weights.shift().fillna(0)
+    buy  = (weights > w_prev).astype(float) * (weights - w_prev)     # increases
+    sell = (w_prev > weights).astype(float) * (w_prev - weights)     # decreases
+    costs = (buy.sum(axis=1) * long_tc) + (sell.sum(axis=1) * short_tc)
+
 
     net_returns = port_returns - costs
 

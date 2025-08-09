@@ -1,4 +1,6 @@
 from sklearn.base import ClassifierMixin
+from sklearn.utils.class_weight import compute_class_weight
+import numpy as np
 
 
 def get_class_to_index(clf: ClassifierMixin) -> dict:
@@ -20,3 +22,10 @@ def get_class_to_index(clf: ClassifierMixin) -> dict:
         return {cls: i for i, cls in enumerate(clf.classes_)}
     else:
         raise ValueError("Classifier must define `class_labels_` or `classes_`.")
+
+
+
+def compute_balanced_weights(y_int):
+    classes = np.unique(y_int)
+    w = compute_class_weight(class_weight="balanced", classes=classes, y=y_int)
+    return {int(c): float(wi) for c, wi in zip(classes, w)}

@@ -21,7 +21,6 @@ from time import time
 import joblib
 import tensorflow as tf
 from keras.models import load_model
-import pandas as pd
 import config
 from config_private import NTFY_SERVER
 from data_loader import (
@@ -36,6 +35,7 @@ from evaluation import backtest_strategy
 from features import build_meta_features
 from features import main as build_and_save_features
 from mlp_modeling import KerasSoftmaxWrapper, mlp_nested_cv
+from mlp_modeling import _safe_transform
 from modeling import (
     calibrate_model,
     split_train_test,
@@ -119,9 +119,10 @@ def main():
     logging.info("=== 7. Generate Meta-features ===")
 
     daily_signals = daily_signals_lo if config.LONG_ONLY else daily_signals_ls
-    X_meta_f2 = build_meta_features(X_fold2, scaler, daily_signals, clf_cal, mlp_v1)
 
-    X_meta_f3 = build_meta_features(X_fold3, scaler, daily_signals, clf_cal, mlp_v1)
+    X_meta_f2 = build_meta_features(X_fold2, scaler, clf_cal, mlp_v1)
+
+    X_meta_f3 = build_meta_features(X_fold3, scaler, clf_cal, mlp_v1)
 
     logging.info("=== 8. Stacking Ensemble ===")
 
@@ -148,8 +149,8 @@ def main():
     evaluate_model(clf_cal, X_fold2, Y_fold2, "CLF")
 
     logging.info("=== 10. MLP Analysis ===")
-    X_fold1_scaled = pd.DataFrame(scaler.transform(X_fold1), index=X_fold1.index, columns=X_fold1.columns)
-    X_fold2_scaled = pd.DataFrame(scaler.transform(X_fold2), index=X_fold2.index, columns=X_fold2.columns)
+    X_fold1_scaled = _safe_transform(scaler, X_fold1)
+    X_fold2_scaled = _safe_transform(scaler, X_fold2)
 
 
     shap_values_v1 = shap_explain(model=mlp_v1t, X_test=X_fold2_scaled, X_train=X_fold1_scaled, name="MLPV1T")
@@ -157,8 +158,8 @@ def main():
     evaluate_model(mlp_v1, X_fold2, Y_fold2, "MLPV1")
 
     logging.info("=== 11. Meta MLP Analysis ===")
-    X_meta_f2_scaled = pd.DataFrame(scaler_meta.transform(X_meta_f2), index=X_meta_f2.index, columns=X_meta_f2.columns)
-    X_meta_f3_scaled = pd.DataFrame(scaler_meta.transform(X_meta_f3), index=X_meta_f3.index, columns=X_meta_f3.columns)
+    X_meta_f2_scaled = _safe_transform(scaler_meta, X_meta_f2)
+    X_meta_f3_scaled = _safe_transform(scaler_meta, X_meta_f3)
 
     shap_values_v2 = shap_explain(model=mlp_v2t, X_test=X_meta_f3_scaled, X_train=X_meta_f2_scaled, name="MLPV2T")
     feature_importance(model=mlp_v2t, shap_values=shap_values_v2, X_test=X_meta_f3_scaled, name="MLPV2")
@@ -166,7 +167,7 @@ def main():
 
     logging.info("=== 12. Meta-filtered signal generation ===")
     filtered_signals = filter_signals_with_meta_model(
-        daily_signals=daily_signals,
+        daily_signals=daily_signals.loc[config.FOLD3_START:],
         clf=mlp_v2,
         X_test=X_meta_f3,
         threshold=config.META_PROBA_THRESHOLD,
