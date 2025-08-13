@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import config
+import src.config as config
 
 # Configure logging
 logger = logging.getLogger(__name__)

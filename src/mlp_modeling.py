@@ -22,10 +22,10 @@ from keras_tuner import Objective
 from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
 
-import config
-from analysis import plot_learning_curve, save_history
-from modeling import scale_features
-from utils import _rolling_windows
+import src.config as config
+from src.analysis import plot_learning_curve, save_history
+from src.modeling import scale_features
+from src.utils import _rolling_windows
 
 logger = logging.getLogger(__name__)
 

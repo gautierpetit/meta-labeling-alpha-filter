@@ -5,7 +5,7 @@ import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
 
-import config
+import src.config as config
 
 # Configure logging
 logging.basicConfig(

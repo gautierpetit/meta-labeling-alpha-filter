@@ -20,15 +20,15 @@ import os
 import sys
 import warnings
 from time import time
-from utils import mirror_tree
+from src.utils import mirror_tree
 import joblib
 import numpy as np
 import tensorflow as tf
 
-import config
-from analysis import evaluate_model, feature_importance, shap_explain, meta_vs_base_diagnostics, append_ablation_row
-from config_private import NTFY_SERVER
-from data_loader import (
+import src.config as config
+from src.analysis import evaluate_model, feature_importance, shap_explain, meta_vs_base_diagnostics, append_ablation_row
+from src.config_private import NTFY_SERVER
+from src.data_loader import (
     load_features,
     load_labels,
     load_monthly_prices,
@@ -36,28 +36,28 @@ from data_loader import (
     load_returns,
     load_spy_returns,
 )
-from evaluation import backtest_strategy
-from features import build_meta_features
-from features import main as build_and_save_features
-from labeling import scan_holding_period_range, scan_tp_sl_grid
-from mlp_modeling import (
+from src.evaluation import backtest_strategy
+from src.features import build_meta_features
+from src.features import main as build_and_save_features
+from src.labeling import scan_holding_period_range, scan_tp_sl_grid
+from src.mlp_modeling import (
     Bundle,
     RollingVectorScaledSoftmax,
     VectorScaledSoftmax,
     _safe_transform,
     mlp_nested_cv,
 )
-from modeling import (
+from src.modeling import (
     RollingVectorScaledSoftmaxLGBM,
     VectorScaledSoftmaxLGBM,
     split_train_test,
     train_model,
 )
-from notifications import send_notification
-from signals import filter_signals_with_meta_model
-from sizing import compute_probability_weighted_returns
-from strategy import compute_momentum, get_daily_signals
-from utils import class_priors, make_run_id, md5_columns, safe_git_sha, write_json, parse_args, read_json
+from src.notifications import send_notification
+from src.signals import filter_signals_with_meta_model
+from src.sizing import compute_probability_weighted_returns
+from src.strategy import compute_momentum, get_daily_signals
+from src.utils import class_priors, make_run_id, md5_columns, safe_git_sha, write_json, parse_args, read_json
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)

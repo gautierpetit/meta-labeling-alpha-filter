@@ -17,9 +17,9 @@ from sklearn.metrics import (
     log_loss,
     roc_auc_score,
 )
-from utils import _to_3d_shap, _per_sample_nll
+from src.utils import _to_3d_shap, _per_sample_nll
 
-import config
+import src.config as config
 import shap
 
 logger = logging.getLogger(__name__)

@@ -3,13 +3,11 @@ from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 import ta
 from tqdm import tqdm
-from numpy.lib.stride_tricks import sliding_window_view
 
-import config
-from data_loader import (
+import src.config as config
+from src.data_loader import (
     load_high_prices,
     load_low_prices,
     load_monthly_prices,
@@ -21,8 +19,8 @@ from data_loader import (
     load_vix,
     load_volumes,
 )
-from labeling import apply_triple_barrier
-from strategy import get_daily_signals
+from src.labeling import apply_triple_barrier
+from src.strategy import get_daily_signals
 
 logger = logging.getLogger(__name__)
 

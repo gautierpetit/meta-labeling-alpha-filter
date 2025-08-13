@@ -12,10 +12,10 @@ from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from skopt import BayesSearchCV
-from utils import _rolling_windows
+from src.utils import _rolling_windows
 
-import config
-from config import (
+import src.config as config
+from src.config import (
     FOLD1_END,
     FOLD1_START,
     FOLD2_END,

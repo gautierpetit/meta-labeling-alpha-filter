@@ -1,6 +1,6 @@
 import pandas as pd
 
-import config
+import src.config as config
 
 
 def load_prices() -> pd.DataFrame:

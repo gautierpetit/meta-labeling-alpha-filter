@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 
-import config
-from data_loader import load_returns
+import src.config as config
+from src.data_loader import load_returns
 
 logger = logging.getLogger(__name__)
 

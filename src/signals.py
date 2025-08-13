@@ -3,8 +3,8 @@ import logging
 import pandas as pd
 from sklearn.base import ClassifierMixin
 
-import config
-from utils import get_class_to_index
+import src.config as config
+from src.utils import get_class_to_index
 
 logger = logging.getLogger(__name__)
 

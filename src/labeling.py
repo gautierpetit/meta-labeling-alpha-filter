@@ -7,7 +7,7 @@ import numpy as np
 import seaborn as sns
 from tqdm import tqdm
 
-import config
+import src.config as config
 
 
 def apply_triple_barrier_ref(
