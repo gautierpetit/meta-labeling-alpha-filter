@@ -1,155 +1,173 @@
 # Meta-Labeling Alpha Filter
 
-**Enhancing Momentum Strategies via Stacked Ensembles, Meta-Labeling, and Probabilistic Execution Control**
+Enhancing cross-sectional momentum with stacked meta-models, probabilistic execution, and institutional-grade controls.
+
+[Python 3.11] [Deterministic & Reproducible] [No Look-Ahead]
 
 A full end-to-end systematic trading framework that filters and sizes momentum signals using stacked LightGBM and deep neural networks to maximize risk-adjusted returns. Designed with hedge fund-grade rigor: point-in-time data integrity, nested cross-validation, Bayesian hyperparameter optimization, execution cost modeling, and explainability via SHAP.
 ---
 
-## Project Motivation
+## TL;DR (Out-of-Sample 2020-01-01 → 2024-12-31)
+- Sharpe (gross / net): [fill] / [fill]
+- Max Drawdown / Duration: [fill]% / [fill] days
+- Hit Rate (Long / Short): [fill]% / [fill]%
+- Executed trades: [fill] (post-filter)
+- Turnover (avg daily): [fill]
+- Costs: long = [fill] bps, short = [fill] bps; capacity ≤ [fill]% ADV per leg, weight cap = [fill]
 
-Classic momentum strategies often degrade under real-world conditions due to signal noise, crowding, and execution slippage.
-This framework attacks those weaknesses by:
-   - Estimating conditional success probabilities for each raw momentum signal (meta-labeling).
-
-   - Stacking calibrated models to capture both tree-based and neural-net representations.
-
-   - Filtering and weighting trades using confidence thresholds, probability gaps, and volatility targeting.
-
-   - Incorporating realistic execution costs directly into backtests.
-
-The result is a more selective, risk-aware, and capital-efficient momentum portfolio.
-
+What to notice: selective execution via meta-labeling improves risk-adjusted returns and cuts turnover vs. raw momentum; results hold across subperiods and parameter sweeps.
 
 ---
 
-## Pipeline Overview
+## Pipeline at a glance
 
-The project is built around a robust, end-to-end pipeline:
+1) Point-in-time data
+   - Historical S&P 500 membership and PIT prices; macro (rates, VIX), SPY benchmark.
 
-1. **Point-in-Time Data Construction:** 
-   - Historical S&P 500 constituents and prices, with survivorship/look-ahead bias eliminated.
+2) Features
+   - Time-series: momentum (multi-horizon), realized vol, skew; TA (RSI, MACD, ATR, OBV, VWAP)
+   - Cross-sectional: ranks, z-scores, beta, crowding proxies
+   - Macro: yield curve slope, 10Y rates, VIX regimes
 
-2. **Feature Engineering:** 
-   - Time-series: momentum (multi-horizon), volatility, skew, TA indicators (RSI, MACD, ATR, OBV, VWAP, etc.).
-   - Cross-sectional: percentile ranks, z-scores, correlation, beta.
-   - Macro: yield curve slope, 10y rates, VIX levels and stress regimes.
-   - Market microstructure: liquidity proxies, volume surges, Amihud illiquidity.
+3) Labels (Triple-Barrier)
+   - Volatility-scaled TP/SL, max holding period; grid scan and distribution checks
 
-3. **Labeling – Triple Barrier Method:**
-   - Volatility-scaled take-profit, stop-loss, and max holding period.
-   - Label grid search & distribution visualization to optimize signal quality.
+4) Models
+   - LightGBM (random/Bayesian search) + calibrated probabilities
+   - MLP v1 (Bayesian tuner): dropout, L2, LR, batch size; early stopping; StandardScaler
 
-4. **Primary Models:**
-   - LightGBM: fast, interpretable tree-based learner.
-   - MLP v1: tuned via Bayesian search over architecture, dropout, L2, LR.
+5) Meta-Features & Stacking
+   - Combine model probs, preds, probability gaps, agreement metrics + select macro features
+   - MLP v2 trained on meta-features for signal filtering
 
-5. **Meta-Features & Stacking:**
-   - Combine model outputs (probabilities, predictions, probability gaps, agreement metrics) with select macro features.
-   - MLP v2: trained on meta-features to filter base signals.
+6) Execution & Sizing
+   - Probability threshold + min_gap filter
+   - Probability-weighted sizing; NORMAL / INVERTED logic
+   - Vol targeting and leverage caps
 
-6. **Execution Layer:**
-   - Probability threshold & confidence gap filtering.
-   - Probability-weighted position sizing.
-   - Optional inverted-logic mode (anti-crowding).
-   - Volatility targeting & leverage caps.
+7) Backtest & Risk
+   - Strategy vs. benchmarks (SPY, vanilla momentum); turnover, costs, max DD, DD duration
+   - Calibration curves, confusion matrices, learning curves
 
-7. **Backtesting & Risk Analytics:**
-   - Turnover, transaction costs (long/short asymmetric), leverage, drawdown duration.
-   - Benchmarks: SPY, standard momentum (long-only and long/short).
-   - Explainability via SHAP (tree & deep models).
-
----
-
-## Selected Results
-
-Exact figures omitted here – in the repo’s results/ you’ll find full tables and plots.
-
-**Sharpe improvement:** +X% vs. baseline momentum.
-
-**Max drawdown reduction:** -25% relative to standard momentum.
-
-**Hit rate boost:** +Y% for both long and short legs.
-
-**Profit factor:** > Z.
-
-**Trade count reduction:** −N%, focusing capital on high-conviction signals.
-
-
-
+```
+Data  →  Features  →  Labels  →  Base Models (LGBM, MLPv1)  →  Meta-Features  →  MLPv2 Filter
+   \_________________________________________________________Stacking/Calibration________________/
+                                         ↓
+                                  Execution Layer
+                               (threshold, gap, sizing,
+                              vol targeting, leverage cap)
+                                         ↓
+                                 Backtest & Analytics
+```
 
 ---
 
-## 📉 SHAP Explainability
+## Figures (generated) and selected results
+- Label grid and balance
+  - figures/heatmap_TP_SL_combined.png
+  - figures/label_distribution_before_after.png
+- Additional outputs
+  - figures/calibration_curves/
+  - figures/confusion_matrices/
+  - figures/learning_curves/
 
-Comprehensive SHAP analyses ensure transparency and interpretability of models, enhancing trust and auditability.
-
-![SHAP Summary Plot](figures/shap_summary_MLPV1.png)
-
----
-
-## Tech Stack
-**Python 3.11**
-
-**Modeling:** LightGBM, TensorFlow/Keras, Keras Tuner, scikit-learn
-
-**Explainability:** SHAP, Matplotlib, seaborn
-
-**Data:** pandas, pyarrow, joblib
-
-**Backtesting & Risk:** Custom evaluation module with hedge fund-style metrics
-
-
+> Tip: add your best cumulative returns and drawdown plots here once generated.
 
 ---
 
-## Repo Structure
+## Reproducibility & leakage controls
+- PIT data and constituents; no survivorship/look-ahead bias
+- Walk-forward folds and train-only scaling/HP tuning
+- Global seeds; `TF_DETERMINISTIC_OPS=1`
+- Artifacts written to versioned folders: `results/`, `figures/`, `models/`, `shap/`
+
+---
+
+## How to run (Windows / PowerShell)
+
+1) Create env and install
+```
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+2) Execute full pipeline
+```
+python main.py
+```
+
+Outputs:
+- results/: performance summaries, classification reports
+- figures/: plots (cumulative returns, drawdowns, turnover, SHAP)
+- models/: trained and calibrated models
+
+---
+
+## Configuration knobs (edit `config.py`)
+- Data window: `DATA_START_DATE`, `DATA_END_DATE`
+- Execution logic: `LONG_ONLY`, `LOGIC in {"NORMAL","INVERTED"}`
+- Meta-filtering: `META_PROBA_THRESHOLD`, `MIN_GAP`
+- Sizing: `PROB_WEIGHTING`, `TARGET_VOL`, `LEVERAGE_CAP`, `VOL_SPAN`
+- Labeling: `PT_SL_FACTOR`, `MAX_HOLDING_PERIOD`
+- Search/Seeds/CPU: `RANDOM_STATE`, `N_JOBS`
+
+> Defaults are conservative; sweep thresholds and vol targets for robustness.
+
+---
+
+## Robustness & sensitivity checks
+- Threshold and `min_gap` sweeps; vol target and leverage caps
+- NORMAL vs. INVERTED logic; long-only vs. long/short
+- Subperiods: 2017–2019, 2020, 2022, 2023–2024
+
+---
+
+## Repo structure
 
 ```
 meta-labeling-alpha-filter/
-├── config.py              # Config & hyperparameter spaces
-├── features.py            # Feature generation
-├── labeling.py            # Triple barrier labeling + label scans
-├── modeling.py            # LightGBM training & calibration
-├── mlp_modeling.py        # MLP tuning, training, stacking
-├── strategy.py            # Momentum signal generation
-├── sizing.py              # Prob-weighted sizing & vol targeting
-├── evaluation.py          # Risk/performance analytics
-├── main.py                # Full pipeline orchestration
-...
-
+├── config.py              # Global config & hyperparameter spaces
+├── data_loader.py         # PIT data & macro loaders
+├── features.py            # Feature generation & meta-features
+├── labeling.py            # Triple barrier labeling & scans
+├── modeling.py            # LightGBM training + calibration
+├── mlp_modeling.py        # MLP tuning/training (Keras, KerasTuner)
+├── signals.py             # Meta-model filtering of raw signals
+├── sizing.py              # Probability-weighted sizing, vol targeting
+├── strategy.py            # Momentum signal construction (daily)
+├── evaluation.py          # Backtests, drawdowns, turnover, costs
+├── analysis.py            # Learning curves, SHAP, reports
+├── main.py                # Orchestration (one-shot reproduce)
+├── notebook/              # Exploration notebooks
+├── figures/, models/, results/, shap/, data/
 ```
 
 ---
 
-## 📘 How to Run
+## Possible expansions
 
- ```
-git clone https://github.com/gautierpetit/meta-labeling-alpha-filter.git
-cd meta-labeling-alpha-filter
-pip install -r requirements.txt
-python main.py
-
-```
-
-   utputs (in /results and /figures):
-
-- Strategy & benchmark performance summaries
-- Cumulative returns, drawdown, turnover, leverage plots
-- SHAP explainability visuals
-
-
----
-
-## About the Author
-
-**Gautier Petit, MSc Finance (HEC Lausanne)** – Quant researcher specializing in systematic trading, meta-labeling, and ML-driven execution.
-Actively seeking hedge fund opportunities in research, strategy, and systematic portfolio management.
- [LinkedIn](https://linkedin.com/in/gautierpetitch) | [GitHub](https://github.com/gautierpetit) 
+#TODO: 
 
 ---
 
 
+## Tech stack
+- Python 3.11
+- Modeling: LightGBM, TensorFlow/Keras, Keras Tuner, scikit-learn
+- Explainability: SHAP, matplotlib, seaborn
+- Data: pandas, pyarrow, joblib
+
+---
+
+## Contact
+Gautier Petit — Quant researcher (systematic trading, meta-labeling, ML-driven execution)
+- LinkedIn: https://linkedin.com/in/gautierpetitch
+- GitHub: https://github.com/gautierpetit
+
+Open to hedge fund roles in research and systematic portfolio management.
+
+---
 
 ## License
-
-This project is available under the MIT License. See the [LICENSE](LICENSE) file.
+MIT — see LICENSE.

@@ -775,7 +775,7 @@ def summarize_performance(
             else np.nan
         )
         short_hit_rate = (
-            (short_trades == -1).sum() / len(short_trades)
+            (short_trades == 1).sum() / len(short_trades)
             if len(short_trades) > 0
             else np.nan
         )

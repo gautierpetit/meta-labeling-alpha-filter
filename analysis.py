@@ -1,7 +1,7 @@
 import json
 import logging
 from typing import Optional, Union
-
+import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -11,11 +11,13 @@ from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     accuracy_score,
+    brier_score_loss,
     classification_report,
     confusion_matrix,
     log_loss,
     roc_auc_score,
 )
+from utils import _to_3d_shap, _per_sample_nll
 
 import config
 import shap
@@ -45,46 +47,41 @@ def shap_explain(
         ValueError: If `X_train` is not provided for deep models.
     """
     X_explain = X_test.sample(1000, random_state=config.RANDOM_STATE)
-    
-    if hasattr(model, "classes_"):  # sklearn-like model
+
+    if hasattr(model, "classes_"):  # tree/sklearn-like
         explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_explain.values)
-    else:  # Deep learning model
+        sv = explainer.shap_values(X_explain.values)
+    else:  # deep model
         if X_train is None:
             raise ValueError("Background dataset required for deep models.")
         background = X_train.sample(100, random_state=config.RANDOM_STATE)
         explainer = shap.DeepExplainer(model, background.values)
-        shap_values = explainer.shap_values(X_explain.values, check_additivity=False)
+        sv = explainer.shap_values(X_explain.values, check_additivity=False)
 
-    # Save SHAP values and generate summary plots
-    for class_idx in range(shap_values.shape[2]):
-        # Shap summary plot
-        shap.summary_plot(
-            shap_values[:, :, class_idx],
-            X_explain,
-            show=False,
-            class_names=[f"Class {class_idx}"],
-        )
+    sv3 = _to_3d_shap(sv)
+    for class_idx in range(sv3.shape[2]):
+        shap.summary_plot(sv3[:, :, class_idx], X_explain, show=False)
         plt.title(f"SHAP Summary Plot for {name} - Class {class_idx}")
         plt.gcf().tight_layout()
-        output_path = config.SHAP_VALUES_DIR / "summaries" / f"summary_{name}_class_{class_idx}.png"
+        output_path = (
+            config.SHAP_VALUES_DIR
+            / "summaries"
+            / f"summary_{name}_class_{class_idx}.png"
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
         plt.savefig(output_path, bbox_inches="tight")
         plt.close()
         logger.info(f"SHAP summary plot saved to: {output_path}")
 
         # Save SHAP values to parquet
         class_df = pd.DataFrame(
-            shap_values[:, :, class_idx],
-            columns=X_test.columns,
-            index=X_explain.index,
+            sv3[:, :, class_idx], columns=X_test.columns, index=X_explain.index
         )
-        output_path = (
-            config.SHAP_VALUES_DIR / "values" / f"values_{name}_class_{class_idx}.parquet"
-        )
-        class_df.to_parquet(output_path)
-        logger.info(f"SHAP values saved to: {output_path}")
-
-    return shap_values
+        
+        output_path2 = config.SHAP_VALUES_DIR / "values" / f"values_{name}_class_{class_idx}.parquet"
+        output_path2.parent.mkdir(parents=True, exist_ok=True) 
+        class_df.to_parquet(output_path2)
+    return sv3
 
 
 def feature_importance(
@@ -116,14 +113,15 @@ def feature_importance(
 
     importance = raw_importance / raw_importance.sum()
     importance = importance.sort_values(ascending=False)
-    logger.info(f"Feature importance: \n{importance * 100}")
+    importance = importance * 100
+    logger.info(f"Feature importance: \n{importance}")
 
     # Save to Excel
     path = config.RESULTS_DIR / "feature_importance" / f"feature_importance_{name}.xlsx"
+    
+    path.parent.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
     importance.to_excel(path, header=["importance"])
     logger.info(f"[{name}] Feature importance saved to: {path}")
-
-
 
 
 def evaluate_model(
@@ -164,7 +162,9 @@ def evaluate_model(
         display_labels=["-1", "0", "1"],
     )
     disp.plot()
-    plt.savefig(config.FIGURES_DIR / "confusion_matrices" / f"confusion_matrix_{name}.png")
+    path = config.FIGURES_DIR / "confusion_matrices" / f"confusion_matrix_{name}.png"
+    path.parent.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
+    plt.savefig(path)
     plt.close()
 
     # Save classification report to JSON
@@ -178,14 +178,6 @@ def evaluate_model(
     report_dict["accuracy"] = acc
     report_dict["roc_auc"] = auc
     report_dict["log_loss"] = logloss
-    json_path = config.RESULTS_DIR / "classification_reports" / f"classification_report_{name}.json"
-    with open(json_path, "w") as f:
-        json.dump(report_dict, f, indent=4)
-
-    logger.info(f"Saved classification report to: {json_path}")
-    logger.info("=== Classification Report ===")
-    logger.info(report_dict)
-    logger.info(f"Accuracy: {acc:.4f}, AUC: {auc:.4f}, Log Loss: {logloss:.4f}")
 
     # Calibration curve for each class
     for class_idx, class_label in enumerate(fixed_labels):
@@ -195,6 +187,15 @@ def evaluate_model(
             n_bins=10,
             strategy="quantile",
         )
+
+        ece = np.abs(prob_true - prob_pred).mean()  # ECE calculation
+        brier = brier_score_loss(
+            (y_true == class_label).astype(int), y_proba[:, class_idx]
+        )
+
+        # Add to report
+        report_dict[f"class_{class_label}_ece"] = ece
+        report_dict[f"class_{class_label}_brier"] = brier
 
         plt.figure(figsize=(6, 6))
         plt.plot(
@@ -210,7 +211,12 @@ def evaluate_model(
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        path = config.FIGURES_DIR / "calibration_curves" / f"calibration_curve_{name}_class_{['-1', '0', '1'][class_idx]}.png"
+        path = (
+            config.FIGURES_DIR
+            / "calibration_curves"
+            / f"calibration_curve_{name}_class_{['-1', '0', '1'][class_idx]}.png"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
         plt.savefig(path)
         plt.close()
 
@@ -221,6 +227,19 @@ def evaluate_model(
             f"Actual proportion in Y_test: {(y_true == class_label).mean():.4f}"
         )
 
+    json_path = (
+        config.RESULTS_DIR
+        / "classification_reports"
+        / f"classification_report_{name}.json"
+    )
+    json_path.parent.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
+    with open(json_path, "w") as f:
+        json.dump(report_dict, f, indent=4)
+
+    logger.info(f"Saved classification report to: {json_path}")
+    logger.info("=== Classification Report ===")
+    logger.info(report_dict)
+    logger.info(f"Accuracy: {acc:.4f}, AUC: {auc:.4f}, Log Loss: {logloss:.4f}")
 
 
 def plot_learning_curve(history, name: str, save: bool = True):
@@ -242,12 +261,106 @@ def plot_learning_curve(history, name: str, save: bool = True):
     plt.grid(alpha=0.3)
     if save:
         path = config.FIGURES_DIR / "learning_curves" / f"learning_curve_{name}.png"
+        path.parent.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
         plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
+
 
 def save_history(history, name: str):
     if history is None or not hasattr(history, "history") or not history.history:
         return
     df = pd.DataFrame(history.history)
     path = config.FIGURES_DIR / "learning_curves" / f"learning_curve_{name}.xlsx"
+    path.parent.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
     df.to_excel(path, index=False)
+
+
+def meta_vs_base_diagnostics(
+    y_true, proba_clf, proba_mlp, proba_meta, label_map, outdir, prefix="fold3"
+):
+    # integer labels & the index for class +1
+    y_int = np.asarray([label_map[int(y)] for y in y_true])
+    k_pos = label_map[1]
+
+    # 1) Δ log-loss histogram (meta minus best base) – per-sample
+    nll_clf = _per_sample_nll(y_int, proba_clf)
+    nll_mlp = _per_sample_nll(y_int, proba_mlp)
+    nll_meta = _per_sample_nll(y_int, proba_meta)
+    delta = nll_meta - np.minimum(nll_clf, nll_mlp)
+
+    plt.figure()
+    plt.hist(delta, bins=60)
+    plt.axvline(delta.mean(), ls="--")
+    plt.title(
+        f"Δ per-sample NLL (meta - best base) | mean={delta.mean():.4f} | improved={(delta < 0).mean():.1%}"
+    )
+    plt.xlabel("Δ NLL")
+    plt.ylabel("count")
+    plt.tight_layout()
+    path = outdir / f"{prefix}_delta_nll_hist.png"
+    path.parent.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
+    plt.savefig(path)
+    plt.close()
+
+    # 2) P(+1) scatter (MLPv1 vs Meta), colored by true class
+    plt.figure()
+    x = proba_mlp[:, k_pos]
+    y = proba_meta[:, k_pos]
+    colors = np.array(["tab:orange", "tab:gray", "tab:green"])[
+        y_int
+    ]  # -1:0,0:1,1:2 after mapping
+    plt.scatter(x, y, s=6, alpha=0.25, c=colors)
+    lim = (0, 1)
+    plt.plot(lim, lim, "k--", lw=1)
+    plt.xlim(lim)
+    plt.ylim(lim)
+    plt.xlabel("MLPv1  P(+1)")
+    plt.ylabel("Meta  P(+1)")
+    plt.title("P(+1): MLPv1 vs Meta (Fold-3)")
+    plt.tight_layout()
+    path = outdir / f"{prefix}_p1_scatter_mlp_vs_meta.png"
+    path.parent.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
+    plt.savefig(path)
+    plt.close()
+
+    # 3) Decile lift on P(+1): empirical freq of class +1
+    df = pd.DataFrame({"p1": proba_meta[:, k_pos], "y": y_int})
+    df["decile"] = pd.qcut(df["p1"], 10, labels=False, duplicates="drop")
+    lift = df.groupby("decile").apply(lambda g: (g["y"] == k_pos).mean())
+    plt.figure()
+    lift.plot(marker="o")
+    plt.title("Empirical P(y=+1) by P(+1) decile (Meta, Fold-3)")
+    plt.xlabel("decile (low→high P(+1))")
+    plt.ylabel("empirical freq of +1")
+    plt.tight_layout()
+    path = outdir / f"{prefix}_decile_lift_meta.png"
+    path.parent.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
+    plt.savefig(path)
+    plt.close()
+
+    # quick summary CSV
+    rows = {
+        "log_loss_clf": log_loss(y_int, proba_clf, labels=[0, 1, 2]),
+        "log_loss_mlp": log_loss(y_int, proba_mlp, labels=[0, 1, 2]),
+        "log_loss_meta": log_loss(y_int, proba_meta, labels=[0, 1, 2]),
+        "mean_delta_nll": float(delta.mean()),
+        "frac_improved": float((delta < 0).mean()),
+    }
+    pd.Series(rows).to_csv(outdir / f"{prefix}_meta_vs_base_summary.csv")
+
+
+def append_ablation_row(out_csv, name, y_true, proba, label_map):
+    y_int = np.asarray([label_map[int(y)] for y in y_true])
+    row = {
+        "model": name,
+        "log_loss": log_loss(y_int, proba, labels=[0,1,2]),
+        "roc_auc_ovr": roc_auc_score(y_int, proba, multi_class="ovr"),
+        # simple ECE (overall): avg of classwise |pred - freq| after 10-bin binning
+    }
+    df = pd.DataFrame([row])
+    if os.path.exists(out_csv):
+        df0 = pd.read_csv(out_csv)
+        df = pd.concat([df0, df], ignore_index=True)
+    path = out_csv
+    path.parent.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
+    df.to_csv(out_csv, index=False)

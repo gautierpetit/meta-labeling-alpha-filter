@@ -78,7 +78,7 @@ def filter_signals_with_meta_model(
     ) if not config.LONG_ONLY else None
     logger.info(f"Total signals: {total_flt_nz}")
     logger.info(
-        f"Filtered percentage: {(total_flt_nz / total_raw_nz):.2%}"
+        f"Filtered percentage: {(total_flt_nz / total_raw_nz) if total_raw_nz > 0 else 0:.2%}"
     )
 
     return filtered_signals

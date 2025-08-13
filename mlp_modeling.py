@@ -1,24 +1,31 @@
+
+import json
 import logging
+import math
 import os
 import random
+from dataclasses import dataclass
 from typing import Literal
 
+import joblib
 import keras_tuner as kt
+import numpy
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from keras.callbacks import EarlyStopping
+from keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from keras.layers import Activation, BatchNormalization, Dense, Dropout
 from keras.models import Sequential
 from keras.optimizers import Adam
 from keras.regularizers import l2
 from keras_tuner import Objective
 from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
-from sklearn.model_selection import TimeSeriesSplit, train_test_split
-from sklearn.preprocessing import StandardScaler
-from analysis import plot_learning_curve, save_history
+from sklearn.model_selection import TimeSeriesSplit
+
 import config
+from analysis import plot_learning_curve, save_history
 from modeling import scale_features
+from utils import _rolling_windows
 
 logger = logging.getLogger(__name__)
 
@@ -30,18 +37,48 @@ tf.random.set_seed(config.RANDOM_STATE)
 # Configure TensorFlow to use deterministic operations
 os.environ["TF_DETERMINISTIC_OPS"] = "1"
 
-# Early stopping callback
-early_stop = EarlyStopping(
-    monitor="val_loss",
-    patience=config.NN_TRAINING_PARAMS["early_stopping_patience"],
-    min_delta=config.NN_TRAINING_PARAMS["early_stopping_min_delta"],
-    restore_best_weights=True,
-    verbose=0,
-)
+
+# put this near your other helpers
+def build_callbacks(monitor="val_loss"):
+    return [
+        EarlyStopping(
+            monitor=monitor,
+            mode="min",
+            patience=config.NN_TRAINING_PARAMS["early_stopping_patience"],
+            min_delta=config.NN_TRAINING_PARAMS["early_stopping_min_delta"],
+            restore_best_weights=True,
+        ),
+        ReduceLROnPlateau(
+            monitor=monitor,
+            mode="min",
+            factor=config.NN_TRAINING_PARAMS["reduce_lr_factor"],
+            patience=config.NN_TRAINING_PARAMS["reduce_lr_patience"],
+            min_lr=config.NN_TRAINING_PARAMS["reduce_lr_min_lr"],
+            verbose=0,
+        ),
+    ]
+
+
+def _safe_transform(scaler, X):
+    if hasattr(scaler, "feature_names_in_"):
+        means = pd.Series(scaler.mean_, index=scaler.feature_names_in_)
+        X = X.reindex(columns=scaler.feature_names_in_).fillna(means)
+    Xt = scaler.transform(X)
+    Xt = np.clip(Xt, -8, 8)  # guards against the Amihud-type spikes
+    return pd.DataFrame(Xt, index=X.index, columns=X.columns)
+
+
+def steps_per_epoch_for(y_len: int, batch_size: int) -> int:
+    return max(1, math.ceil(y_len / batch_size))
 
 
 def make_dataset(
-    X: np.ndarray, y: np.ndarray, *, batch_size: int,) -> tf.data.Dataset:
+    X: np.ndarray,
+    y: np.ndarray,
+    *,
+    batch_size: int,
+    sample_weight: np.ndarray | None = None,
+) -> tf.data.Dataset:
     """
     Create a TensorFlow dataset from features and labels.
 
@@ -54,13 +91,79 @@ def make_dataset(
     Returns:
         tf.data.Dataset: Prepared TensorFlow dataset.
     """
-    ds = tf.data.Dataset.from_tensor_slices((X.astype(np.float32), y.astype(np.int32)))
-    ds = ds.batch(batch_size)
-    ds = ds.prefetch(tf.data.AUTOTUNE)
-    return ds
+
+    X = X.astype(np.float32)
+    y = y.reshape(-1).astype(np.int32)
+    if sample_weight is None:
+        ds = tf.data.Dataset.from_tensor_slices((X, y))
+    else:
+        sw = sample_weight.astype(np.float32)
+        ds = tf.data.Dataset.from_tensor_slices((X, y, sw))
+    return ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
 
-def build_model(hp: kt.HyperParameters, input_dim: int, project_name="mlp") -> Sequential:
+def make_balanced_dataset(
+    X: np.ndarray,
+    y: np.ndarray,
+    *,
+    batch_size: int,
+    seed: int = 42,
+) -> tf.data.Dataset:
+    """Create a balanced tf.data pipeline with ~equal class sampling."""
+    X = X.astype(np.float32)
+    y = y.reshape(-1).astype(np.int32)
+    base = tf.data.Dataset.from_tensor_slices((X, y))
+
+    # split by class indices (assuming LABEL_MAP maps {-1,0,1} -> {0,1,2})
+    ds0 = base.filter(lambda x, t: tf.equal(t, 0)).repeat()
+    ds1 = base.filter(lambda x, t: tf.equal(t, 1)).repeat()
+    ds2 = base.filter(lambda x, t: tf.equal(t, 2)).repeat()
+
+    ds_bal = tf.data.Dataset.sample_from_datasets(
+        [ds0, ds1, ds2], weights=[1 / 3, 1 / 3, 1 / 3], seed=seed
+    )
+    return ds_bal.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+
+
+@tf.keras.utils.register_keras_serializable(package="custom")
+class SparseCCELabelSmoothing(tf.keras.losses.Loss):
+    def __init__(
+        self, n_classes, label_smoothing=0.0, from_logits=True, name="sparse_cce_ls"
+    ):
+        # Make the outer loss produce a scalar per batch
+        super().__init__(
+            reduction=tf.keras.losses.Reduction.SUM_OVER_BATCH_SIZE, name=name
+        )
+        self.n_classes = int(n_classes)
+        self.from_logits = bool(from_logits)
+        self.label_smoothing = float(label_smoothing)
+        # Inner CE stays unreduced -> returns a vector of per-example losses
+        self._ce = tf.keras.losses.CategoricalCrossentropy(
+            from_logits=self.from_logits,
+            label_smoothing=self.label_smoothing,
+            reduction=tf.keras.losses.Reduction.NONE,
+        )
+
+    def call(self, y_true, y_pred):
+        # ensure 1D labels before one-hot
+        y_true = tf.cast(tf.squeeze(y_true), tf.int32)
+        y_true_oh = tf.one_hot(y_true, depth=self.n_classes)
+        per_example = self._ce(y_true_oh, y_pred)   # shape (batch,)
+        return per_example  # outer Loss (SUM_OVER_BATCH_SIZE) reduces to scalar
+
+
+    def get_config(self):
+        return {
+            "n_classes": self.n_classes,
+            "label_smoothing": self.label_smoothing,
+            "from_logits": self.from_logits,
+            "name": self.name,
+        }
+
+
+def build_model(
+    hp: kt.HyperParameters, input_dim: int, bias_init: str, project_name="mlp"
+) -> Sequential:
     """
     Build a Keras MLP model with hyperparameter tuning support.
 
@@ -72,7 +175,9 @@ def build_model(hp: kt.HyperParameters, input_dim: int, project_name="mlp") -> S
         Sequential: Compiled Keras model.
     """
 
-    hp_space = config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
+    hp_space = (
+        config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
+    )
 
     n_hidden = hp.Int("n_hidden", **hp_space["n_hidden"])
     dropout_rate = hp.Float("dropout", **hp_space["dropout"])
@@ -99,22 +204,78 @@ def build_model(hp: kt.HyperParameters, input_dim: int, project_name="mlp") -> S
         model.add(Activation(activation))
         model.add(Dropout(dropout_rate))
 
-    model.add(Dense(3))
+    model.add(Dense(3, bias_initializer=bias_init))
 
+    n_classes = len(config.LABEL_MAP)  # 3
+    loss_fn = SparseCCELabelSmoothing(
+        n_classes=n_classes,
+        label_smoothing=hp_space["label_smoothing"],
+        from_logits=True,
+    )
     model.compile(
         optimizer=Adam(
-            hp.Float("learning_rate", **hp_space["learning_rate"])
+            hp.Float("learning_rate", **hp_space["learning_rate"]), clipnorm=1.0
         ),
-        loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+        loss=loss_fn,
+        metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="acc")],
     )
     return model
 
 
-def _safe_transform(scaler: StandardScaler, X: pd.DataFrame) -> pd.DataFrame:
-    if hasattr(scaler, "feature_names_in_"):
-        X = X.reindex(columns=scaler.feature_names_in_, fill_value=0.0)
-    Xt = scaler.transform(X)
-    return pd.DataFrame(Xt, index=X.index, columns=X.columns)
+def train_MLP(
+    X: pd.DataFrame,
+    Y: pd.Series,
+    best_hp: kt.HyperParameters,
+    input_dim: int,
+    project_name="mlp",
+) -> Sequential:
+    y_int = Y.map(config.LABEL_MAP).values
+    hp_space = (
+        config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
+    )
+
+    X_scaled, final_scaler = scale_features(X, return_scaler=True)
+
+    counts = np.bincount(y_int, minlength=3).astype(float)
+    eps = 1e-3
+    priors = (counts + eps) / (counts.sum() + 3 * eps)
+    bias_init = tf.keras.initializers.Constant(np.log(priors))
+
+    model = build_model(
+        best_hp, input_dim, bias_init=bias_init, project_name=project_name
+    )
+
+    cut = int(0.85 * len(X_scaled))
+    Xtr, ytr = X_scaled.iloc[:cut], y_int[:cut]
+    Xva, yva = X_scaled.iloc[cut:], y_int[cut:]
+
+    train_ds = make_balanced_dataset(
+        Xtr.values, ytr, batch_size=hp_space["batch_size"], seed=config.RANDOM_STATE
+    )
+    val_ds = make_dataset(Xva.values, yva, batch_size=hp_space["batch_size"])
+
+    bsize = hp_space["batch_size"]
+    train_steps = steps_per_epoch_for(len(ytr), bsize)
+    val_steps = steps_per_epoch_for(len(yva), bsize)
+
+    cb_final = build_callbacks()
+
+    history = model.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=hp_space["epochs"],
+        steps_per_epoch=train_steps,
+        validation_steps=val_steps,
+        callbacks=cb_final,
+        verbose=0,
+    )
+
+    model_tag = f"{project_name}_final"
+    plot_learning_curve(history, name=model_tag)
+    save_history(history, name=model_tag)
+
+    return model, final_scaler
+
 
 def mlp_nested_cv(
     X: pd.DataFrame,
@@ -125,12 +286,12 @@ def mlp_nested_cv(
     y_int = Y.map(config.LABEL_MAP).values
     input_dim = X.shape[1]
 
-    outer_cv = TimeSeriesSplit(
-        n_splits=config.CV_N_SPLITS, gap=config.MAX_HOLDING_PERIOD
-    )
+    outer_cv = TimeSeriesSplit(n_splits=config.CV_N_SPLITS, gap=config.CV_GAP)
     acc_scores, auc_scores, ll_scores, hparams_all = [], [], [], []
 
-    hp_space = config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
+    hp_space = (
+        config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
+    )
 
     for fold, (train_idx, val_idx) in enumerate(outer_cv.split(X), 1):
         logger.info(f"\nOuter Fold {fold}/{config.CV_N_SPLITS}")
@@ -142,8 +303,16 @@ def mlp_nested_cv(
         X_train_scaled, fold_scaler = scale_features(X_train_raw, return_scaler=True)
         X_val_scaled = _safe_transform(fold_scaler, X_val_raw)
 
+        # Initialize bias for the output layer based on class priors
+        counts = np.bincount(y_train_int, minlength=3).astype(float)
+        eps = 1e-3
+        priors = (counts + eps) / (counts.sum() + 3 * eps)
+        bias_init = tf.keras.initializers.Constant(np.log(priors))
+
         def model_builder(hp):
-            return build_model(hp, input_dim, project_name=project_name)
+            return build_model(
+                hp, input_dim, bias_init=bias_init, project_name=project_name
+            )
 
         tuner_cls = (
             kt.BayesianOptimization if estimation == "Bayesian" else kt.RandomSearch
@@ -154,26 +323,37 @@ def mlp_nested_cv(
             objective=Objective("val_loss", direction="min"),
             max_trials=hp_space["max_trials"],
             executions_per_trial=1,
-            directory=f"kt/fold_{fold}",
+            directory=f"{config.MODELS_DIR}/kt/fold_{fold}",
             project_name=project_name,
             overwrite=True,
             seed=config.RANDOM_STATE,
         )
 
-        train_ds = make_dataset(
+        train_ds = make_balanced_dataset(
             X_train_scaled.values,
             y_train_int,
             batch_size=hp_space["batch_size"],
+            seed=config.RANDOM_STATE,
         )
         val_ds = make_dataset(
             X_val_scaled.values,
             y_val_int,
             batch_size=hp_space["batch_size"],
-            )
+            sample_weight=None,
+        )
+
+        bsize = hp_space["batch_size"]
+        train_steps = steps_per_epoch_for(len(y_train_int), bsize)
+        val_steps = steps_per_epoch_for(len(y_val_int), bsize)
+
+        cb_search = build_callbacks()
         tuner.search(
             train_ds,
-            validation_data=val_ds,  
+            validation_data=val_ds,
             epochs=hp_space["epochs"],
+            steps_per_epoch=train_steps,
+            validation_steps=val_steps,
+            callbacks=cb_search,
             verbose=0,
         )
 
@@ -181,12 +361,14 @@ def mlp_nested_cv(
         best_model = tuner.hypermodel.build(best_hp)
         hparams_all.append(best_hp)
 
-
+        cb_refit = build_callbacks()
         history = best_model.fit(
             train_ds,
             validation_data=val_ds,
             epochs=hp_space["epochs"],
-            callbacks=[early_stop],
+            steps_per_epoch=train_steps,
+            validation_steps=val_steps,
+            callbacks=cb_refit,
             verbose=0,
         )
 
@@ -212,10 +394,21 @@ def mlp_nested_cv(
         )
         logger.info(f"\nBest HPs: {best_hp.values}")
 
-    best_fold = np.argmax(auc_scores)
+    ll = np.array(ll_scores)
+    auc = np.array(auc_scores)
+
+    # Ranks: smaller ll is better; larger auc is better
+    rank_ll  = np.argsort(np.argsort(ll))                   # 0 = best
+    rank_auc = np.argsort(np.argsort(-auc))                 # 0 = best
+
+    # Heavily weight log-loss, use AUC as tie-breaker
+    rank_sum = 2*rank_ll + rank_auc
+    best_fold = int(np.argmin(rank_sum))
     best_fold_hp = hparams_all[best_fold]
 
-    model, final_scaler = train_MLP(X, Y, best_fold_hp, input_dim, project_name=project_name)
+    model, final_scaler = train_MLP(
+        X, Y, best_fold_hp, input_dim, project_name=project_name
+    )
     filename = config.MODELS_DIR / f"{project_name}.keras"
     model.save(filename)
 
@@ -224,60 +417,319 @@ def mlp_nested_cv(
         f"\nMean Accuracy: {np.mean(acc_scores):.4f} ± {np.std(acc_scores):.4f}"
         f"\nMean ROC AUC: {np.mean(auc_scores):.4f} ± {np.std(auc_scores):.4f}"
         f"\nMean Log Loss: {np.mean(ll_scores):.4f} ± {np.std(ll_scores):.4f}"
-        f"\nBest Fold selected is: {best_fold+1} with AUC {auc_scores[best_fold]:.4f}"
+        f"\nBest Fold selected is: {best_fold + 1} with AUC {auc_scores[best_fold]:.4f}"
         f"\nTraining model on best parameters: {best_fold_hp.values}"
         f"\nModel saved to: {filename}"
     )
 
-    return model, final_scaler, best_fold_hp, acc_scores, auc_scores, ll_scores, hparams_all
-
-
-def train_MLP(
-    X: pd.DataFrame, Y: pd.Series, best_hp: kt.HyperParameters, input_dim: int, project_name="mlp"
-) -> Sequential:
-    y_int = Y.map(config.LABEL_MAP).values  
-    hp_space = config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
-
-    X_scaled, final_scaler = scale_features(X, return_scaler=True)
-
-    model = build_model(best_hp, input_dim, project_name=project_name)
-    train_ds = make_dataset(
-        X_scaled.values, y_int, batch_size=hp_space["batch_size"]
+    return (
+        model,
+        final_scaler,
+        best_fold_hp,
+        acc_scores,
+        auc_scores,
+        ll_scores,
+        hparams_all,
     )
 
-    history = model.fit(
-        train_ds,
-        class_weight=hp_space["class_weight"],
-        epochs=hp_space["epochs"],
-        callbacks=[early_stop],
-        verbose=0,
-    )
-
-    model_tag = f"{project_name}_final"
-    plot_learning_curve(history, name=model_tag)
-    save_history(history, name=model_tag)
-
-    return model, final_scaler
 
 
-class KerasSoftmaxWrapper:
-    def __init__(self, model, label_map: dict, scaler=None):
+@dataclass
+class Bundle:
+    model: tf.keras.Model
+    scaler: object  # e.g., StandardScaler
+    class_labels: np.ndarray  # e.g., np.array([-1, 0, 1])
+
+    def save(self, path: str):
+        os.makedirs(path, exist_ok=True)
+        # SavedModel so we don't need custom_objects at load time
+        self.model.save(os.path.join(path, "model"), include_optimizer=False)
+        joblib.dump(self.scaler, os.path.join(path, "scaler.pkl"))
+        with open(os.path.join(path, "meta.json"), "w") as f:
+            json.dump({"class_labels": self.class_labels.tolist()}, f)
+
+    @classmethod
+    def load(cls, path: str, compile: bool = False):
+        model = tf.keras.models.load_model(os.path.join(path, "model"), compile=compile)
+        scaler = joblib.load(os.path.join(path, "scaler.pkl"))
+        with open(os.path.join(path, "meta.json"), "r") as f:
+            meta = json.load(f)
+        return cls(
+            model=model, scaler=scaler, class_labels=np.array(meta["class_labels"])
+        )
+
+
+
+class VectorScaledSoftmax:
+    """
+    Post-hoc multiclass calibration:
+      z'_k = a_k * z_k + b_k,   p = softmax(z')
+    Compatible with TF 2.10. Trains a,b on a held-out validation set
+    by minimizing multinomial NLL (with small L2 on (a-1,b)).
+    """
+
+    def __init__(
+        self,
+        model,
+        label_map: dict,
+        scaler=None,
+        a: np.ndarray | None = None,
+        b: np.ndarray | None = None,
+    ):
         self.model = model
-        self.class_labels_ = sorted(
-            label_map.keys(), key=lambda k: label_map[k]
-        )  # e.g., [-1, 0, 1]
+        # order classes by model index: e.g. {-1:0, 0:1, 1:2}
+        self.class_labels_ = sorted(label_map.keys(), key=lambda k: label_map[k])
         self.class_to_index = label_map
         self.scaler = scaler
+        K = len(self.class_labels_)
+        self.a = (
+            np.ones(K, dtype=np.float64)
+            if a is None
+            else np.asarray(a, dtype=np.float64)
+        )
+        self.b = (
+            np.zeros(K, dtype=np.float64)
+            if b is None
+            else np.asarray(b, dtype=np.float64)
+        )
 
-    def predict_proba(self, X):
+    @staticmethod
+    def _softmax_np(z: np.ndarray) -> np.ndarray:
+        z = z - np.max(z, axis=1, keepdims=True)
+        ez = np.exp(z)
+        return ez / np.sum(ez, axis=1, keepdims=True)
+
+    @classmethod
+    def from_validation(
+        cls,
+        model,
+        label_map,
+        scaler,
+        X_val: pd.DataFrame,
+        y_val_int: np.ndarray,
+        reg: float = 1e-3,
+        lr: float = 0.05,
+        max_iter: int = 1000,
+        tol: float = 1e-7,
+        patience: int = 20,
+    ):
+        """
+        Fit a,b on a validation fold and return a ready-to-use calibrator.
+        y_val_int must be integer-coded according to label_map values (0..K-1).
+        """
+        if scaler is None:
+            raise ValueError("Scaler required. Pass the scaler used for training.")
+        
+        Xt = _safe_transform(scaler, X_val)
+        logits = model.predict(
+            Xt.values, verbose=0
+        )  # raw logits (from_logits=True in loss)
+        n, K = logits.shape
+
+        # ensure labels are 0..K-1
+        y_val_int = np.asarray(y_val_int)
+        if y_val_int.min() < 0 or y_val_int.max() >= logits.shape[1]:
+            raise ValueError(
+                "y_val_int must be integer-coded in [0..K-1]. "
+                "Did you forget to map with config.LABEL_MAP?"
+            )
+
+
+        # TF variables
+        a = tf.Variable(np.ones(K, dtype=np.float32))
+        b = tf.Variable(np.zeros(K, dtype=np.float32))
+        y_tf = tf.convert_to_tensor(y_val_int, tf.int32)
+        z_tf = tf.convert_to_tensor(logits, tf.float32)
+
+        opt = tf.keras.optimizers.Adam(learning_rate=lr)
+
+        best = np.inf
+        stall = 0
+
+        @tf.function
+        def step():
+            with tf.GradientTape() as tape:
+                # z' = a*z + b
+                z_prime = z_tf * a[tf.newaxis, :] + b[tf.newaxis, :]
+                # NLL
+                loss = tf.reduce_mean(
+                    tf.keras.losses.sparse_categorical_crossentropy(
+                        y_tf, z_prime, from_logits=True
+                    )
+                )
+                # small L2 on (a-1, b) to prevent extreme values
+                loss += reg * (tf.reduce_sum((a - 1.0) ** 2) + tf.reduce_sum(b**2))
+            grads = tape.gradient(loss, [a, b])
+            opt.apply_gradients(zip(grads, [a, b]))
+            return loss
+
+        for _ in range(max_iter):
+            loss = float(step().numpy())
+            if best - loss > tol:
+                best = loss
+                stall = 0
+            else:
+                stall += 1
+                if stall >= patience:
+                    break
+
+        return cls(
+            model=model,
+            label_map=label_map,
+            scaler=scaler,
+            a=a.numpy().astype(np.float64),
+            b=b.numpy().astype(np.float64),
+        )
+
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         if self.scaler is None:
-            raise ValueError("Scaler not found. Ensure model was trained with consistent scaling.")
-        X_t = _safe_transform(self.scaler, X)
-        logits = self.model.predict(X_t.values, verbose=0)
-        return tf.nn.softmax(logits, axis=1).numpy()
+            raise ValueError(
+                "Scaler not found. Ensure model was trained with consistent scaling."
+            )
+        if hasattr(self.scaler, "feature_names_in_"):
+            exp = list(self.scaler.feature_names_in_)
+            got = list(X.columns)
+            if exp != got:
+                raise ValueError(
+                    "Meta feature schema mismatch for calibrator.\n"
+                    f"Expected (from scaler): {exp[:5]}... (len={len(exp)})\n"
+                    f"Got: {got[:5]}... (len={len(got)})"
+                )
+        Xt = _safe_transform(self.scaler, X)
+        logits = self.model.predict(Xt.values, verbose=0)
+        z_prime = logits * self.a[np.newaxis, :] + self.b[np.newaxis, :]
+        return self._softmax_np(z_prime)
 
-    def predict(self, X):
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
         proba = self.predict_proba(X)
-        indices = np.argmax(proba, axis=1)
-        return np.array([self.class_labels_[i] for i in indices])
+        idx = np.argmax(proba, axis=1)
+        return np.array([self.class_labels_[i] for i in idx])
 
+    # Optional helpers to persist calibration params
+    def get_params(self) -> dict:
+        return {
+            "a": self.a.copy(),
+            "b": self.b.copy(),
+            "class_labels": self.class_labels_,
+        }
+
+    def set_params(self, a: np.ndarray, b: np.ndarray):
+        self.a = np.asarray(a, dtype=np.float64)
+        self.b = np.asarray(b, dtype=np.float64)
+
+
+
+class RollingVectorScaledSoftmax:
+    """
+    Leakage-free post-hoc calibration for a single base model over time.
+    - Inside Fold-2: split chronologically; for each segment j, fit VectorScaling
+      on an earlier slice and use it to predict the next slice (OOS).
+    - Outside Fold-2 (e.g., Fold-3): use the last fitted (most recent) scaling.
+
+    """
+
+    def __init__(self, model, label_map, scaler, segments, default_ab):
+        self.model = model
+        self.scaler = scaler
+        self.class_labels_ = sorted(label_map.keys(), key=lambda k: label_map[k])
+        self.class_to_index = label_map
+        self.K = len(self.class_labels_)
+        # segments: list of (start_label, end_label, a_vec, b_vec)
+        self.segments = segments
+        # default (a,b) used outside all segments
+        self.default_a, self.default_b = default_ab
+
+    @staticmethod
+    def _softmax_np(z):
+        z = z - np.max(z, axis=1, keepdims=True)
+        ez = np.exp(z)
+        return ez / np.sum(ez, axis=1, keepdims=True)
+
+    @classmethod
+    def from_fold2(
+        cls,
+        model,
+        label_map,
+        scaler,
+        X_fold2: pd.DataFrame,
+        y_fold2_int: np.ndarray,
+        n_splits: int = 3,
+        embargo: int = 5,
+        *,
+        reg=1e-3,
+        lr=0.05,
+        max_iter=1000,
+        tol=1e-7,
+        patience=20,
+    ):
+        """
+        Build a leakage-free rolling calibrator over Fold-2 using n_splits equal slices
+        with an embargo (in rows) between fit and predict slices.
+        """
+        n = len(X_fold2)
+        idx = X_fold2.index
+        segments = []
+        last_a = np.ones(len(label_map))
+        last_b = np.zeros(len(label_map))
+
+        for cal_end, pred_start, pred_end in _rolling_windows(n, n_splits, embargo):
+            vs = VectorScaledSoftmax.from_validation(
+                model,
+                label_map,
+                scaler,
+                X_fold2.iloc[:cal_end],
+                y_fold2_int[:cal_end],
+                reg=reg,
+                lr=lr,
+                max_iter=max_iter,
+                tol=tol,
+                patience=patience,
+            )
+            last_a, last_b = vs.a.copy(), vs.b.copy()
+            start_label = idx[pred_start]
+            end_label = idx[pred_end - 1]
+            segments.append((start_label, end_label, last_a, last_b))
+
+        return cls(model, label_map, scaler, segments, (last_a, last_b))
+
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        if self.scaler is None:
+            raise ValueError(
+                "Scaler not found. Ensure model was trained with consistent scaling."
+            )
+        if hasattr(self.scaler, "feature_names_in_"):
+            exp = list(self.scaler.feature_names_in_)
+            got = list(X.columns)
+            if exp != got:
+                raise ValueError(
+                    "Meta feature schema mismatch for calibrator.\n"
+                    f"Expected (from scaler): {exp[:5]}... (len={len(exp)})\n"
+                    f"Got: {got[:5]}... (len={len(got)})"
+                )
+        Xt = _safe_transform(self.scaler, X)
+        logits = self.model.predict(Xt.values, verbose=0)
+        out = np.full((len(X), self.K), np.nan, dtype=np.float64)
+
+        # apply segment-specific (a,b) inside Fold-2 ranges
+        for start_label, end_label, a, b in self.segments:
+            mask = (X.index >= start_label) & (X.index <= end_label)
+            if not np.any(mask):
+                continue
+            z_prime = logits[mask] * a[np.newaxis, :] + b[np.newaxis, :]
+            out[mask] = self._softmax_np(z_prime)
+
+        # anything not covered (e.g., Fold-3) uses the most recent (a,b)
+        missing = np.isnan(out).any(axis=1)
+        if np.any(missing):
+            z_prime = (
+                logits[missing] * self.default_a[np.newaxis, :]
+                + self.default_b[np.newaxis, :]
+            )
+            out[missing] = self._softmax_np(z_prime)
+
+        return out
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        proba = self.predict_proba(X)
+        idx = np.argmax(proba, axis=1)
+        return np.array([self.class_labels_[i] for i in idx])

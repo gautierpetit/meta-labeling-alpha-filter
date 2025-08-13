@@ -15,9 +15,13 @@ FIGURES_DIR = ROOT_DIR / "figures"
 MODELS_DIR = ROOT_DIR / "models"
 RESULTS_DIR = ROOT_DIR / "results"
 SHAP_VALUES_DIR = ROOT_DIR / "shap"
+MLPV1_DIR = MODELS_DIR / "mlpv1"
+MLPV2_DIR = MODELS_DIR / "mlpv2"
+RUNS_DIR = ROOT_DIR / "runs"
+CLF_DIR = MODELS_DIR / "clf"
 
 # Ensure directories exist
-for path in [DATA_DIR, FIGURES_DIR, MODELS_DIR, RESULTS_DIR, SHAP_VALUES_DIR]:
+for path in [DATA_DIR, FIGURES_DIR, MODELS_DIR, RESULTS_DIR, SHAP_VALUES_DIR, RUNS_DIR]:
     path.mkdir(parents=True, exist_ok=True)
 
 # === DATA SETTINGS ===
@@ -44,10 +48,10 @@ Y = DATA_DIR / "Y.parquet"
 TOP_QUANTILE = 0.9
 BOTTOM_QUANTILE = 0.1
 PT_SL_FACTOR = (
-    3,
-    3,
-)  
-MAX_HOLDING_PERIOD = 20
+    5,
+    5,
+)  # 5, 5
+MAX_HOLDING_PERIOD = 63
 
 # === META MODEL SETTINGS ===
 FOLD1_START = "2010-01-01"  # '2011-02-28'
@@ -60,84 +64,94 @@ FOLD3_START = "2020-01-01"
 FOLD3_END = "2024-12-31"
 
 CV_N_SPLITS = 3  
-RANDOM_SEARCH_ITER = 20  
-CV_SCORING = "neg_log_loss" 
+CV_GAP = 63
+RANDOM_SEARCH_ITER = 15  
+
 
 
 LABEL_MAP = {-1: 0, 0: 1, 1: 2}
 
-# === HYPERPARAMETER SEARCH SPACE ===
-HYPERPARAM_RANDOM = {
-    "n_estimators": randint(800, 1500),
-    "learning_rate": loguniform(0.001, 0.01),  
-    "num_leaves": randint(40, 128),  
-    "max_depth": randint(40, 60),  
-    "min_child_samples": randint(40, 100),  
-    "subsample": uniform(0.6, 1),  
-    "colsample_bytree": uniform(0.6, 1.0), 
-    "reg_alpha": loguniform(1e-2, 5),  
-    "reg_lambda": loguniform(1e-2, 2),  
-    "scale_pos_weight": uniform(1.0, 3.0),  
-    "min_split_gain": loguniform(1e-6, 1e-2), 
-    "bagging_freq": randint(1, 10),  
+
+# LightGBM — RandomizedSearchCV (fast, tight ranges)
+HYPERPARAM_RANDOM =  {
+    "n_estimators": randint(200, 600),  # Reduce the range of trees
+    "learning_rate": loguniform(0.05, 0.2),  # Focus on higher learning rates for faster convergence
+    "num_leaves": randint(20, 100),  # Smaller trees for faster training
+    "max_depth": randint(3, 8),  # Limit tree depth to reduce complexity
+    "min_child_samples": randint(50, 120),  # Slightly higher minimum samples for stability
+    "subsample": uniform(0.7, 0.3),  # Narrow the range for row sampling
+    "colsample_bytree": uniform(0.7, 0.3),  # Narrow the range for feature sampling
+    "reg_alpha": loguniform(1e-4, 0.1),  # Focus on smaller regularization values
+    "reg_lambda": loguniform(1e-3, 1.0),  # Reduce the range for L2 regularization
+    "min_split_gain": loguniform(1e-6, 1e-3),  # Narrow the range for split gain
+    "bagging_freq": randint(0, 3),  # Reduce bagging frequency
 }
+# LightGBM — BayesSearchCV (more sample-efficient)
+# max_depth=-1, boosting_type="gbdt", objective="multiclass"
 
 HYPERPARAM_BAYESIAN = {
-    # Better capacity but bounded runtime
-    "n_estimators": Integer(300, 700),
-    "learning_rate": Real(0.008, 0.06, prior="log-uniform"),
-    "num_leaves": Integer(31, 127),
-    "max_depth": Integer(7, 12),
-    "min_child_samples": Integer(20, 80),
-    "subsample": Real(0.7, 1.0),
-    "colsample_bytree": Real(0.6, 1.0),
-    "reg_alpha": Real(1e-5, 1e-1, prior="log-uniform"),
-    "reg_lambda": Real(1e-5, 1e-1, prior="log-uniform"),
-    "scale_pos_weight": Real(0.9, 1.5),
-    "min_split_gain": Real(1e-6, 1e-2, prior="log-uniform"),
-    "bagging_freq": Integer(0, 2),
+    # capacity / learning dynamics
+    "n_estimators": Integer(1100, 1500),                 # best=1200
+    "learning_rate": Real(0.006, 0.010, prior="log-uniform"),  # best≈0.008
+
+    # tree shape
+    "num_leaves": Integer(200, 240),                     # best=228
+    "min_child_samples": Integer(50, 70),                # best=59
+    "min_split_gain": Real(3e-5, 2e-4, prior="log-uniform"),   # best≈7.9e-5
+
+    # randomness / subsampling
+    "subsample": Real(0.60, 0.80),                       # best≈0.723
+    "colsample_bytree": Real(0.58, 0.76),                # best=0.60
+    "bagging_freq": Integer(1, 2),                       # best=1
+    "extra_trees": Categorical([True]),           # best=True (allow flip)
+
+    # regularization
+    "reg_alpha": Real(0.5, 2.0, prior="log-uniform"),   # best=1.0 (was bound)
+    "reg_lambda": Real(2e-3, 2e-2, prior="log-uniform"), # best≈4.8e-3
 }
 
+# MLP V1 — operates on raw features (broader, but still quick)
 MLPV1_HP_SPACE = {
-    # More expressive than before but faster than very-wide nets
-    "units1": [512, 1024, 1536],
-    "units2": [256, 512, 768],
-    "units3": [128, 256, 384],
-    "units4": [64, 128],
-    "units5": [32, 64],
-    "n_hidden": {"min_value": 3, "max_value": 5, "step": 1},
-    "dropout": {"min_value": 0.0, "max_value": 0.15, "step": 0.05},
-    "l2_reg": [0.0, 1e-6, 5e-6, 1e-5, 5e-5],
+    "units1": [384, 512, 640, 768],
+    "units2": [256, 384, 512],
+    "units3": [96, 128, 192, 256],
+    "n_hidden": {"min_value": 2, "max_value": 3, "step": 1},
+    "dropout": {"min_value": 0.10, "max_value": 0.30, "step": 0.05},
+    "l2_reg": [0.0, 1e-7, 1e-6, 1e-5],
     "activation": ["relu"],
-    "learning_rate": {"min_value": 1e-7, "max_value": 1e-4, "sampling": "log"},
+    "learning_rate": {"min_value": 3e-4, "max_value": 3e-3, "sampling": "log"},
     "epochs": 100,
-    "class_weight": {0: 0.8963260312726995, 1: 1.361415000116136, 2: 0.8697129545134175},
-    "batch_size": 4096,
-    "max_trials": 12,
+    "batch_size": 2048,
+    "max_trials": 30,
     "batch_norm": True,
+    "label_smoothing": 0.00,
 }
 
+
+
+# === MLP V2 (meta/stacking) ===
 MLPV2_HP_SPACE = {
-    # Slightly larger head than before; still light
-    "units1": [96, 128, 192, 256],
-    "units2": [48, 64, 96, 128],
-    "units3": [24, 32, 48, 64],
-    "units4": [16, 24, 32],
-    "n_hidden": {"min_value": 2, "max_value": 3, "step": 1},
-    "dropout": {"min_value": 0.0, "max_value": 0.30, "step": 0.05},
-    "l2_reg": [0.0, 1e-6, 5e-6, 1e-5],
+    "units1": [128, 160, 192],
+    "units2": [64, 96, 128],
+    "units3": [32, 64],
+    "n_hidden": {"min_value": 1, "max_value": 2, "step": 1},
+    "dropout": {"min_value": 0.15, "max_value": 0.35, "step": 0.05},
+    "l2_reg": [1e-5, 3e-5, 1e-4, 3e-4],
     "activation": ["relu"],
-    "learning_rate": {"min_value": 1e-7, "max_value": 1e-4, "sampling": "log"},
-    "epochs": 60,
-    "class_weight": {0: 0.9019218562186837, 1: 1.3774958745874588, 2: 0.8581470059110768},
-    "batch_size": 4096,
-    "max_trials": 10,
-    "batch_norm": False,
+    "learning_rate": {"min_value": 3e-4, "max_value": 2e-3, "sampling": "log"},
+    "epochs": 120,
+    "batch_size": 512,
+    "max_trials": 30,
+    "batch_norm": True,
+    "label_smoothing": 0.00,
 }
 
 NN_TRAINING_PARAMS = {
-    "early_stopping_patience": 8,   # slightly tighter to save time
-    "early_stopping_min_delta": 1e-4,
+    "early_stopping_patience": 16,   # slightly tighter to save time
+    "early_stopping_min_delta": 2e-4,
+    "reduce_lr_patience": 4, 
+    "reduce_lr_factor": 0.5,
+    "reduce_lr_min_lr": 1e-6,
 }
 
 
@@ -147,19 +161,18 @@ LONG_SIDE_TC = 0.001  # 10 bps
 SHORT_SIDE_TC = 0.002  # 20 bps
 
 LONG_ONLY = False  # Requires retraining
-LOGIC = "NORMAL"  # "NORMAL" or "INVERTED"
-PROB_WEIGHTING = True  # Use model probabilities to weight signals
+PROB_WEIGHTING = False  # Use model probabilities to weight signals
 TARGET_VOL = -1  # -1 to turn off volatility targeting
 VOL_SPAN = 20
 LEVERAGE_CAP = -1  # -1 to turn off leverage cap
-META_PROBA_THRESHOLD = 0.5 # 0.45
-MIN_GAP = 0.2  # Minimum gap between long and short probabilities to consider a signal valid
+META_PROBA_THRESHOLD = 0.6 # 0.45
+MIN_GAP = 0.3  # Minimum gap between long and short probabilities to consider a signal valid
 
 # === OUTPUT FILES ===
 MISSING_DATA_REPORT = DATA_DIR / "missing_count.xlsx"
 TICKER_AVAILABILITY_REPORT = DATA_DIR / "ticker_availability.xlsx"
 PERFORMANCE_SUMMARY_XLSX = RESULTS_DIR / "performance_summary.xlsx"
-CLF_PATH = MODELS_DIR / "clf.pkl"
+CLF_PATH = CLF_DIR / "clf.pkl"
 CLF_CAL_PATH = MODELS_DIR / "clf_cal.pkl"
 MLPV1T = MODELS_DIR / "mlpv1t.keras"
 MLPV2T = MODELS_DIR / "mlpv2t.keras"

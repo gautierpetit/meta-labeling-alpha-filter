@@ -21,6 +21,7 @@ config_private.py
 # IDE-specific files
 .vscode/
 .idea/
+.vs/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
@@ -41,4 +42,4 @@ dist/
 .eggs/
 
 # Project-specific directories
-kt*/
+presentation/
