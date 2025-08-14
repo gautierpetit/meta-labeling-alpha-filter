@@ -21,6 +21,8 @@ from keras.regularizers import l2
 from keras_tuner import Objective
 from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 
 import src.config as config
 from src.analysis import plot_learning_curve, save_history
@@ -402,7 +404,7 @@ def mlp_nested_cv(
     rank_auc = np.argsort(np.argsort(-auc))                 # 0 = best
 
     # Heavily weight log-loss, use AUC as tie-breaker
-    rank_sum = 2*rank_ll + rank_auc
+    rank_sum = rank_ll + rank_auc
     best_fold = int(np.argmin(rank_sum))
     best_fold_hp = hparams_all[best_fold]
 
@@ -417,7 +419,9 @@ def mlp_nested_cv(
         f"\nMean Accuracy: {np.mean(acc_scores):.4f} ± {np.std(acc_scores):.4f}"
         f"\nMean ROC AUC: {np.mean(auc_scores):.4f} ± {np.std(auc_scores):.4f}"
         f"\nMean Log Loss: {np.mean(ll_scores):.4f} ± {np.std(ll_scores):.4f}"
-        f"\nBest Fold selected is: {best_fold + 1} with AUC {auc_scores[best_fold]:.4f}"
+        f"\nBest Fold selected is: {best_fold+1} "
+        f"(selector = 2*rank(NLL)+rank(AUC); "
+        f"NLL={ll[best_fold]:.4f}, AUC={auc[best_fold]:.4f})"
         f"\nTraining model on best parameters: {best_fold_hp.values}"
         f"\nModel saved to: {filename}"
     )
@@ -517,13 +521,17 @@ class VectorScaledSoftmax:
         Fit a,b on a validation fold and return a ready-to-use calibrator.
         y_val_int must be integer-coded according to label_map values (0..K-1).
         """
-        if scaler is None:
-            raise ValueError("Scaler required. Pass the scaler used for training.")
-        
-        Xt = _safe_transform(scaler, X_val)
-        logits = model.predict(
-            Xt.values, verbose=0
-        )  # raw logits (from_logits=True in loss)
+        if hasattr(model, "predict_logits"):
+            # e.g. MetaLogit: it handles its own scaling/columns
+            logits = model.predict_logits(X_val)  # (n, K)
+        else:
+            if scaler is None:
+                raise ValueError(
+                    "Scaler required unless model exposes `predict_logits`."
+                )
+            Xt = _safe_transform(scaler, X_val)
+            logits = model.predict(Xt.values, verbose=0)
+
         n, K = logits.shape
 
         # ensure labels are 0..K-1
@@ -533,7 +541,6 @@ class VectorScaledSoftmax:
                 "y_val_int must be integer-coded in [0..K-1]. "
                 "Did you forget to map with config.LABEL_MAP?"
             )
-
 
         # TF variables
         a = tf.Variable(np.ones(K, dtype=np.float32))
@@ -582,21 +589,16 @@ class VectorScaledSoftmax:
         )
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
-        if self.scaler is None:
-            raise ValueError(
-                "Scaler not found. Ensure model was trained with consistent scaling."
-            )
-        if hasattr(self.scaler, "feature_names_in_"):
-            exp = list(self.scaler.feature_names_in_)
-            got = list(X.columns)
-            if exp != got:
+        if hasattr(self.model, "predict_logits"):
+            logits = self.model.predict_logits(X)
+        else:
+            if self.scaler is None:
                 raise ValueError(
-                    "Meta feature schema mismatch for calibrator.\n"
-                    f"Expected (from scaler): {exp[:5]}... (len={len(exp)})\n"
-                    f"Got: {got[:5]}... (len={len(got)})"
+                    "Scaler not found. Pass a scaler or provide `predict_logits`."
                 )
-        Xt = _safe_transform(self.scaler, X)
-        logits = self.model.predict(Xt.values, verbose=0)
+            Xt = _safe_transform(self.scaler, X)
+            logits = self.model.predict(Xt.values, verbose=0)
+
         z_prime = logits * self.a[np.newaxis, :] + self.b[np.newaxis, :]
         return self._softmax_np(z_prime)
 
@@ -733,3 +735,250 @@ class RollingVectorScaledSoftmax:
         proba = self.predict_proba(X)
         idx = np.argmax(proba, axis=1)
         return np.array([self.class_labels_[i] for i in idx])
+
+
+
+
+
+
+
+
+
+class ConvexProbabilityBlender:
+    """
+    Learns a single weight w in [0,1] to blend calibrated proba from
+    the two base models present in X_meta columns:
+      p_blend = w * p_mlp + (1-w) * p_clf
+    Expects columns: proba_clf_-1, proba_clf_0, proba_clf_1,
+                     proba_mlp_-1, proba_mlp_0, proba_mlp_1
+    """
+
+    def __init__(self, label_map, w=0.5):
+        self.class_labels_ = sorted(label_map.keys(), key=lambda k: label_map[k])
+        self.class_to_index = label_map
+        self.w = float(w)
+
+    @staticmethod
+    def _nll(y_true_int, proba, eps=1e-12):
+        p = np.clip(proba, eps, 1 - eps)
+        p /= p.sum(axis=1, keepdims=True)
+        return -np.mean(np.log(p[np.arange(len(y_true_int)), y_true_int]))
+
+    @classmethod
+    def from_fold2(cls, label_map, X_meta_f2, y_fold2_int):
+        # grid-search w in [0,1]
+        grid = np.linspace(0.0, 1.0, 21)
+        proba_clf = X_meta_f2[["proba_clf_-1", "proba_clf_0", "proba_clf_1"]].values
+        proba_mlp = X_meta_f2[["proba_mlp_-1", "proba_mlp_0", "proba_mlp_1"]].values
+
+        best_w, best_nll = 0.5, np.inf
+        for w in grid:
+            p = w * proba_mlp + (1.0 - w) * proba_clf
+            nll = cls._nll(y_fold2_int, p)
+            if nll < best_nll:
+                best_nll, best_w = nll, w
+        return cls(label_map, w=best_w)
+
+    # keep interface similar to your other "model" wrappers
+    def predict_proba(self, X_meta: pd.DataFrame) -> np.ndarray:
+        proba_clf = X_meta[["proba_clf_-1", "proba_clf_0", "proba_clf_1"]].values
+        proba_mlp = X_meta[["proba_mlp_-1", "proba_mlp_0", "proba_mlp_1"]].values
+        p = self.w * proba_mlp + (1.0 - self.w) * proba_clf
+        # normalize just in case
+        p = np.clip(p, 1e-12, 1.0)
+        p /= p.sum(axis=1, keepdims=True)
+        return p
+
+    def predict(self, X_meta: pd.DataFrame) -> np.ndarray:
+        p = self.predict_proba(X_meta)
+        idx = np.argmax(p, axis=1)
+        return np.array([self.class_labels_[i] for i in idx])
+
+
+
+
+
+class MetaLogit:
+    """Multinomial logistic regression meta-learner on X_meta."""
+
+    def __init__(self, label_map, C=1.0):
+        self.class_labels_ = sorted(label_map.keys(), key=lambda k: label_map[k])
+        self.class_to_index = label_map
+        self.scaler = StandardScaler()
+        self.model = LogisticRegression(
+            multi_class="multinomial",
+            solver="lbfgs",
+            C=C,
+            class_weight="balanced",
+            max_iter=1000,
+            n_jobs=-1,
+        )
+        self.selected_cols = None
+
+    def fit(self, X_meta: pd.DataFrame, y):
+        # Select robust columns
+        cols = [
+            "proba_clf_-1",
+            "proba_clf_0",
+            "proba_clf_1",
+            "proba_mlp_-1",
+            "proba_mlp_0",
+            "proba_mlp_1",
+            "proba_gap_clf",
+            "proba_gap_mlp",
+            "confidence_mean",
+            "confidence_agreement",
+            "model_agreement",
+            "logodds_clf",
+            "logodds_mlp",
+            "margin_clf",
+            "margin_mlp",
+        ]
+        self.selected_cols = [c for c in cols if c in X_meta.columns]
+        Xs = self.scaler.fit_transform(X_meta[self.selected_cols].values)
+        y_int = pd.Series(y).map(self.class_to_index).values
+        self.model.fit(Xs, y_int)
+        return self
+
+    def predict_proba(self, X_meta: pd.DataFrame) -> np.ndarray:
+        Xs = self.scaler.transform(X_meta[self.selected_cols].values)
+        proba = self.model.predict_proba(Xs)
+        # scikit uses class order [0,1,2] already
+        return proba
+
+    def predict(self, X_meta: pd.DataFrame) -> np.ndarray:
+        idx = self.model.predict(
+            self.scaler.transform(X_meta[self.selected_cols].values)
+        )
+        return np.array([self.class_labels_[i] for i in idx])
+
+    def predict_logits(self, X_meta: pd.DataFrame) -> np.ndarray:
+        # use the same selected_cols you fit on
+        Xs = self.scaler.transform(X_meta[self.selected_cols].values)
+        # multinomial LR returns class-wise linear scores (pre-softmax)
+        return self.model.decision_function(Xs)  # shape (n_samples, K)
+
+
+
+
+
+
+
+
+class ClasswiseConvexBlender:
+    """
+    p_k = w_k * p_clf_k + (1 - w_k) * p_mlp_k,  w_k in (0,1) learned on Fold-2.
+    Holds references to two *calibrated* base model wrappers that expose predict_proba(X).
+    """
+
+    def __init__(self, model_clf, model_mlp, label_map: dict):
+        # base models used during *fit* (Fold-2)
+        self.model_clf = model_clf
+        self.model_mlp = model_mlp
+        # order classes by model index: e.g. {-1:0,0:1,1:2}
+        self.class_labels_ = np.array(
+            sorted(label_map.keys(), key=lambda k: label_map[k])
+        )
+        self.class_to_index = label_map
+        self.w = np.full(len(self.class_labels_), 0.5, dtype=np.float64)  # start at 0.5
+
+    def _blend(self, p_clf, p_mlp, w_sig):
+        p = w_sig[np.newaxis, :] * p_clf + (1.0 - w_sig[np.newaxis, :]) * p_mlp
+        p = np.clip(p, 1e-9, 1.0)
+        p /= p.sum(axis=1, keepdims=True)
+        return p
+
+    def fit(
+        self,
+        X_fold2,
+        y_fold2_int,
+        *,
+        lr=0.05,
+        reg=1e-4,
+        max_iter=2000,
+        patience=50,
+        tol=1e-7,
+        verbose=False,
+    ):
+        """Learn w_k on Fold-2 using calibrated base models passed at __init__."""
+        p1 = self.model_clf.predict_proba(X_fold2)  # (N, K)
+        p2 = self.model_mlp.predict_proba(X_fold2)  # (N, K)
+
+        # tensors
+        w = tf.Variable(self.w.astype(np.float32))
+        y = tf.convert_to_tensor(y_fold2_int.astype(np.int32))
+        P1 = tf.convert_to_tensor(p1.astype(np.float32))
+        P2 = tf.convert_to_tensor(p2.astype(np.float32))
+        opt = tf.keras.optimizers.Adam(lr)
+
+        @tf.function
+        def step():
+            # unconstrained w -> (0,1) via sigmoid
+            w_sig = tf.clip_by_value(tf.sigmoid(w), 1e-3, 1.0 - 1e-3)
+            P = w_sig[tf.newaxis, :] * P1 + (1.0 - w_sig[tf.newaxis, :]) * P2
+            loss = tf.reduce_mean(
+                tf.keras.losses.sparse_categorical_crossentropy(y, P, from_logits=False)
+            )
+            # tiny shrinkage toward fairness (0.5) to reduce variance
+            loss += reg * tf.reduce_sum((w_sig - 0.5) ** 2)
+            grads = tf.gradients(loss, [w])[0]
+            opt.apply_gradients([(grads, w)])
+            return loss
+
+        best = np.inf
+        stall = 0
+        for _ in range(max_iter):
+            loss = float(step().numpy())
+            if best - loss > tol:
+                best, stall = loss, 0
+            else:
+                stall += 1
+                if stall >= patience:
+                    break
+
+        self.w = tf.sigmoid(w).numpy().astype(np.float64)
+        if verbose:
+            print(
+                f"Classwise blender weights (by class order {self.class_labels_.tolist()}): {self.w}"
+            )
+        return self
+
+    # --- inference wiring ---
+    def with_inference_models(self, model_clf, model_mlp):
+        """Return a copy that reuses learned weights but swaps the base models (e.g., Fold-3 calibrators)."""
+        clone = ClasswiseConvexBlender(model_clf, model_mlp, self.class_to_index)
+        clone.w = self.w.copy()
+        return clone
+
+    # evaluate_model expects predict_proba(X) / predict(X)
+    def predict_proba(self, X):
+        p1 = self.model_clf.predict_proba(X)
+        p2 = self.model_mlp.predict_proba(X)
+        p = self._blend(p1, p2, self.w)
+        return p
+
+    def predict(self, X):
+        p = self.predict_proba(X)
+        idx = p.argmax(axis=1)
+        return self.class_labels_[idx]
+
+    
+    def save(self, path: str):
+        os.makedirs(path, exist_ok=True)
+        payload = {
+            "class_labels": self.class_labels_.tolist(),
+            "w": self.w.tolist(),
+        }
+        with open(os.path.join(path, "blender_cw.json"), "w") as f:
+            json.dump(payload, f, indent=2)
+
+    @classmethod
+    def load(cls, path: str, model_clf, model_mlp, label_map: dict):
+        with open(os.path.join(path, "blender_cw.json"), "r") as f:
+            payload = json.load(f)
+        obj = cls(model_clf, model_mlp, label_map)
+        obj.class_labels_ = np.array(payload["class_labels"])
+        obj.w = np.array(payload["w"], dtype=np.float64)
+        # (optional) sanity checks
+        assert len(obj.w) == len(obj.class_labels_), "w/class mismatch"
+        return obj

@@ -131,8 +131,8 @@ MLPV1_HP_SPACE = {
 
 # === MLP V2 (meta/stacking) ===
 MLPV2_HP_SPACE = {
-    "units1": [128, 160, 192],
-    "units2": [64, 96, 128],
+    "units1": [128, 160],
+    "units2": [64, 96],
     "units3": [32, 64],
     "n_hidden": {"min_value": 1, "max_value": 2, "step": 1},
     "dropout": {"min_value": 0.15, "max_value": 0.35, "step": 0.05},
@@ -143,7 +143,7 @@ MLPV2_HP_SPACE = {
     "batch_size": 512,
     "max_trials": 30,
     "batch_norm": True,
-    "label_smoothing": 0.00,
+    "label_smoothing": 0.05,
 }
 
 NN_TRAINING_PARAMS = {
@@ -163,10 +163,10 @@ SHORT_SIDE_TC = 0.002  # 20 bps
 LONG_ONLY = False  # Requires retraining
 PROB_WEIGHTING = False  # Use model probabilities to weight signals
 TARGET_VOL = -1  # -1 to turn off volatility targeting
-VOL_SPAN = 20
+VOL_SPAN = 63
 LEVERAGE_CAP = -1  # -1 to turn off leverage cap
-META_PROBA_THRESHOLD = 0.6 # 0.45
-MIN_GAP = 0.3  # Minimum gap between long and short probabilities to consider a signal valid
+META_PROBA_THRESHOLD = 0.5 # 0.45
+MIN_GAP = 0.2  # Minimum gap between long and short probabilities to consider a signal valid
 
 # === OUTPUT FILES ===
 MISSING_DATA_REPORT = DATA_DIR / "missing_count.xlsx"

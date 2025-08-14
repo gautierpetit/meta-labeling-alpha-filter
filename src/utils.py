@@ -14,6 +14,7 @@ from sklearn.base import ClassifierMixin
 import shutil
 from pathlib import Path
 
+
 def get_class_to_index(clf: ClassifierMixin) -> dict:
     """
     Retrieve a mapping of class labels to indices from the classifier.
@@ -35,7 +36,6 @@ def get_class_to_index(clf: ClassifierMixin) -> dict:
         raise ValueError("Classifier must define `class_labels_` or `classes_`.")
 
 
-
 def _rolling_windows(n: int, n_splits: int = 3, embargo: int = 5):
     """
     Build (cal_end, pred_start, pred_end) triplets in row indices:
@@ -48,37 +48,44 @@ def _rolling_windows(n: int, n_splits: int = 3, embargo: int = 5):
     cuts = [0] + [int(round(n * i / n_splits)) for i in range(1, n_splits)] + [n]
     windows = []
     for j in range(1, len(cuts) - 1):
-        cal_end   = cuts[j]
+        cal_end = cuts[j]
         pred_start = min(cal_end + max(embargo, 0), n)
-        pred_end   = cuts[j+1]
+        pred_end = cuts[j + 1]
         if pred_end > pred_start:
             windows.append((cal_end, pred_start, pred_end))
     return windows
 
+
 def _to_3d_shap(sv):
     import numpy as np
-    if isinstance(sv, list):             # e.g., TreeExplainer multiclass
-        return np.stack(sv, axis=2)      # [(n,f)] -> (n,f,C)
+
+    if isinstance(sv, list):  # e.g., TreeExplainer multiclass
+        return np.stack(sv, axis=2)  # [(n,f)] -> (n,f,C)
     sv = np.asarray(sv)
-    if sv.ndim == 2:                     # binary/single-output
+    if sv.ndim == 2:  # binary/single-output
         return sv[..., None]
-    return sv                            # already (n,f,C)
+    return sv  # already (n,f,C)
 
 
 def make_run_id(tag: str | None = None) -> str:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{ts}_{tag}" if tag else ts
 
+
 def md5_columns(df) -> str:
     s = ",".join(map(str, df.columns))
     h = hashlib.md5(s.encode()).hexdigest()
     return h
 
+
 def safe_git_sha() -> str:
     try:
-        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], text=True
+        ).strip()
     except Exception:
         return "unknown"
+
 
 def write_json(path, obj):
     def convert_keys(o):
@@ -96,19 +103,27 @@ def write_json(path, obj):
     with open(path, "w") as f:
         json.dump(convert_keys(obj), f, indent=2, default=str)
 
+
 def read_json(path):
     with open(path, "r") as f:
         return json.load(f)
+
 
 def class_priors(y_int: np.ndarray, n_classes: int) -> list[float]:
     counts = np.bincount(y_int, minlength=n_classes)
     return (counts / counts.sum()).round(6).tolist()
 
+
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--run-tag", type=str, default="default", help="Run tag for this execution.")
-    p.add_argument("--mirror-latest", action="store_true",
-                   help="Copy this run's artifacts to top-level figures/results/shap/models")
+    p.add_argument(
+        "--run-tag", type=str, default="default", help="Run tag for this execution."
+    )
+    p.add_argument(
+        "--mirror-latest",
+        action="store_true",
+        help="Copy this run's artifacts to top-level figures/results/shap/models",
+    )
     args, unknown = p.parse_known_args()
     return args
 
@@ -117,7 +132,6 @@ def _per_sample_nll(y_int, proba):
     eps = 1e-15
     p = np.clip(proba[np.arange(len(y_int)), y_int], eps, 1 - eps)
     return -np.log(p)
-
 
 
 def mirror_tree(src: Path, dst: Path):

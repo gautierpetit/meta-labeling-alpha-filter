@@ -728,3 +728,24 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+def build_meta_features_lean(X_base, base_model_lgbm, base_model_mlp):
+    X_full = build_meta_features(X_base, base_model_lgbm, base_model_mlp)
+    cols = [
+        # calibrated probs
+        "proba_clf_-1","proba_clf_0","proba_clf_1",
+        "proba_mlp_-1","proba_mlp_0","proba_mlp_1",
+        # confidence summaries
+        "margin_clf","margin_mlp","logodds_clf","logodds_mlp",
+        # agreements / blends
+        "model_agreement","confidence_agreement","confidence_mean","blend_p1",
+        # non-timeout
+        "non_timeout_clf","non_timeout_mlp",
+        # simple regimes
+        "vix","vix_high","volatility_zscore","10yTbill","yield_curve_slope","month_of_year_sin",
+        # (optional) "js_div",
+    ]
+    return X_full.reindex(columns=cols)

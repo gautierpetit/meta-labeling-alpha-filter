@@ -73,8 +73,6 @@ def get_daily_signals(
 def compute_momentum(
     prices: pd.DataFrame,
     daily_signals: pd.DataFrame,
-    long_only: bool = config.LONG_ONLY,
-    plot: bool = True,
 ) -> pd.Series:
     """
     Compute the daily returns of a momentum strategy.
@@ -85,11 +83,6 @@ def compute_momentum(
         Daily price data.
     daily_signals : pd.DataFrame
         Signal matrix (-1, 0, 1 values).
-    long_only : bool, optional
-        Whether this is a long-only strategy. Default is config.LONG_ONLY.
-    plot : bool, optional
-        Whether to plot the cumulative returns. Default is True.
-
     Returns
     -------
     pd.Series
@@ -98,27 +91,13 @@ def compute_momentum(
     logger.info("Computing momentum strategy returns.")
 
     daily_returns = prices.pct_change(fill_method=None)
-    strategy_returns = daily_returns * daily_signals
+    active = daily_signals != 0
+    valid  = daily_returns.notna()
+    used   = active & valid
 
-    if long_only:
-        total_positions = (daily_signals != 0).sum(axis=1)
-    else:
-        long_count = (daily_signals == 1).sum(axis=1)
-        short_count = (daily_signals == -1).sum(axis=1)
-        total_positions = long_count + short_count
-
-    total_positions = total_positions.replace(0, np.nan)
-    mom_returns = strategy_returns.sum(axis=1) / total_positions
-
-    if plot:
-        logger.info("Plotting cumulative returns.")
-        (1 + mom_returns.fillna(0)).cumprod().plot(
-            title="Momentum Strategy Performance"
-            if long_only
-            else "Long/Short Momentum Strategy",
-            figsize=(12, 6),
-        )
-        plt.close()
+    strategy_returns = daily_returns.where(used, 0.0) * daily_signals.where(used, 0.0)
+    den = used.sum(axis=1).replace(0, np.nan)
+    mom_returns = strategy_returns.sum(axis=1) / den
 
     logger.info("Momentum strategy returns computed successfully.")
     return mom_returns

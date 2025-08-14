@@ -16,68 +16,56 @@ logger = logging.getLogger(__name__)
 
 def load_constituents(path: str, start_date: str) -> pd.Series:
     """
-    Load and clean the constituents data from a CSV file.
+    Load and normalize S&P 500 constituents from a CSV file.
 
     Args:
         path (str): Path to the CSV file containing constituents data.
-        start_date (str): Start date for filtering the data.
+        start_date (str): Start date for filtering constituents.
 
     Returns:
-        pd.Series: Cleaned and filtered constituents data.
+        pd.Series: Normalized constituents data indexed by date.
     """
     df = pd.read_csv(path)
-    constituents = pd.Series(
+    raw = pd.Series(
         [row.split(",") for row in df.iloc[:, 1]],
         index=pd.to_datetime(df.iloc[:, 0], format="%Y-%m-%d"),
     )
-    last_date_before_start = constituents.index[constituents.index < start_date].max()
-    constituents = constituents[constituents.index >= last_date_before_start]
-    constituents.loc[config.DATA_END_DATE] = constituents.iloc[
-        -1
-    ]  # Carry forward for masking
+    last_date_before_start = raw.index[raw.index < start_date].max()
+    raw = raw[raw.index >= last_date_before_start]
 
-    fix_map = {
-        "BF.B": "BF-B",
-        "BRK.B": "BRK-B",
-        "AABA": "YHOO",
-        "WFM": "AMZN",
-        "WCG": "CVS",
-        "UA": "UAA",
-        "RTN": "RTX",
-        "APC": "OXY",
-        "DNB": "DNB",
-        "JOY": "CAT",
-        "LVLT": "LUMN",
-        "HSP": "ABBV",
-        "CBS": "PARA",
-        "LLL": "LHX",
-        "FISV": "FI",
-        "HCBK": "MTB",
-        "COV": "MDT",
+    # 1) Generic Yahoo normalization: dot -> hyphen
+    def yf_norm(t: str) -> str:
+        return t.strip().replace(".", "-")
+
+    # 2) True renames only (same security line)
+    SAFE_RENAMES = {
         "FB": "META",
+        "FISV": "FI",
+        # keep dot/hyphen handled by yf_norm, so no need for BRK.B/BF.B here
     }
-    fix_map.update(
-        {
-            "YHOO": "AABA",  # YHOO became AABA after Verizon deal
-            "CELG": "BMY",  # Acquired by BMY
-            "MON": "BAYRY",  # Monsanto → Bayer
-            "DWDP": "DOW",  # DowDuPont split
-            "VIAB": "PARA",  # Viacom → Paramount
-            "CBS": "PARA",  # CBS also → Paramount
-            "ALTR": "INTC",  # Altera acquired by Intel
-            "BRCM": "AVGO",  # Broadcom legacy
-            "SNDK": "WDC",  # SanDisk acquired by Western Digital
-            "LO": "BTI",  # Lorillard → Reynolds → BAT
-            "TWC": "CMCSA",  # Time Warner Cable → Comcast
-            "RAI": "BTI",  # Reynolds → BAT
-            "TWTR": "X",  # Twitter now trades as X (if listed again)
-            "COV": "MDT",  # Covidien → Medtronic
-            "LLTC": "ADI",  # Linear → Analog Devices
-            "ARG": "AIR",  # Airgas → Air Liquide (no ticker match but placeholder)
-        }
-    )
 
-    return constituents.apply(lambda x: sorted(set(fix_map.get(t, t) for t in x)))
+    out = []
+    for tickers in raw:
+        mapped = []
+        seen = set()
+        for t in tickers:
+            t0 = yf_norm(t)
+            t1 = SAFE_RENAMES.get(t0, t0)
+            # Prevent collisions created by renames (e.g., CBS/VIAB->PARA was bad)
+            if t1 in seen:
+                # keep the original symbol instead of forcing a collision
+                t1 = t0
+            seen.add(t1)
+            mapped.append(t1)
+        out.append(sorted(set(mapped)))
+
+    constituents = pd.Series(out, index=raw.index)
+
+    # Optional: carry forward last set for masking end-boundary
+    constituents.loc[config.DATA_END_DATE] = constituents.iloc[-1]
+
+    return constituents
+
 
 
 def download_market_data(tickers: List[str], start: str, end: str) -> pd.DataFrame:
@@ -151,8 +139,8 @@ def extract_ohlcv(
     low = master_df.loc[:, (slice(None), "Low")]
 
     for df in [close, volume, high, low]:
-        df.columns = df.columns.levels[0]
-        df.sort_index(axis=1, inplace=True)
+        df.columns = df.columns.get_level_values(0)
+        df = df.sort_index(axis=1)  
 
     return close, volume, high, low
 
@@ -188,6 +176,22 @@ def save_filtered_data(
     logger.info("Filtered data saved successfully.")
 
 
+def _dedupe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    De-duplicate columns in a DataFrame by averaging duplicate columns.
+
+    Args:
+        df (pd.DataFrame): Input DataFrame.
+
+    Returns:
+        pd.DataFrame: De-duplicated DataFrame.
+    """
+    if df.columns.is_unique:
+        return df
+    logging.warning("De-duplicating duplicate tickers...")
+    return df.T.groupby(level=0).mean().T
+
+
 def main() -> None:
     """
     Main function to orchestrate the data processing pipeline.
@@ -208,6 +212,26 @@ def main() -> None:
 
     prices, volumes, prices_high, prices_low = extract_ohlcv(master_df)
 
+    # De-duplicate columns
+    prices  = _dedupe(prices)
+    volumes = _dedupe(volumes)
+    prices_high = _dedupe(prices_high)
+    prices_low = _dedupe(prices_low)
+
+    # 1) Kill non-sensical prices (<= 0 or too tiny) so pct_change won't explode
+    prices = prices.mask(prices <= 0)
+    prices = prices.mask(prices < 1e-3)  # yfinance near-zero glitch guard
+
+    # 2) Inspect & neutralize absurd daily returns
+    r = prices.pct_change(fill_method=None)
+    spike_mask = r.abs() > 5.0  # > +500% in a day is almost surely bad
+    if spike_mask.any().any():
+        offenders = spike_mask.sum().sort_values(ascending=False).head(10)
+        logging.warning("Clipping extreme returns; top offenders: %s", offenders.index.tolist())
+        # null out just the offending points
+        prices = prices.mask(spike_mask) 
+
+
     # === Download macro indicators ===
     logger.info("Downloading macro indicators.")
     spy = yf.download(
@@ -227,6 +251,7 @@ def main() -> None:
 
     # === Build point-in-time mask ===
     mask = build_point_in_time_mask(prices, constituents)
+
 
     # === Validate and save ===
     assert prices.shape == mask.shape, "Prices and mask shapes do not match."
