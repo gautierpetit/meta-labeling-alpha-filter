@@ -1,5 +1,14 @@
+"""Feature engineering utilities.
+
+This module computes the project's cross-sectional and time-series features
+used by the meta-models. Functions are typed and documented so callers can
+reason about data shapes (dates x tickers) and expected return types.
+"""
+
 import logging
-from typing import Dict, Tuple
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -25,7 +34,7 @@ from src.strategy import get_daily_signals
 logger = logging.getLogger(__name__)
 
 
-def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
+def build_features() -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     """
     Generate feature matrix X and binary outcome labels Y for meta-modeling.
 
@@ -55,9 +64,7 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
 
     # Labeling
     logger.info("Generating labels using triple barrier method.")
-    daily_signals = get_daily_signals(
-        prices, monthly_prices, long_only=config.LONG_ONLY
-    )
+    daily_signals = get_daily_signals(prices, monthly_prices, long_only=config.LONG_ONLY)
     Y, label_times = apply_triple_barrier(prices, daily_signals, volatility)
 
     # Core price & return features
@@ -68,9 +75,9 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
 
     volatility_63d = prices.pct_change(fill_method=None).rolling(63).std()
     volatility_21d = prices.pct_change(fill_method=None).rolling(21).std()
-    volatility_zscore = (
-        volatility_63d - volatility_63d.rolling(252).mean().shift(1)
-    ) / (volatility_63d.rolling(252).std().shift(1))
+    volatility_zscore = (volatility_63d - volatility_63d.rolling(252).mean().shift(1)) / (
+        volatility_63d.rolling(252).std().shift(1)
+    )
 
     vov_63 = volatility_21d.rolling(63).std()
 
@@ -154,18 +161,10 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
 
     vol_trend_63, _ = rolling_slope_r2(volatility_21d, window=63)
 
-    time_from_high_63 = prices.rolling(63).apply(
-        lambda x: len(x) - 1 - np.argmax(x), raw=True
-    )
-    time_from_low_63 = prices.rolling(63).apply(
-        lambda x: len(x) - 1 - np.argmin(x), raw=True
-    )
-    time_from_high_252 = prices.rolling(252).apply(
-        lambda x: len(x) - 1 - np.argmax(x), raw=True
-    )
-    time_from_low_252 = prices.rolling(252).apply(
-        lambda x: len(x) - 1 - np.argmin(x), raw=True
-    )
+    time_from_high_63 = prices.rolling(63).apply(lambda x: len(x) - 1 - np.argmax(x), raw=True)
+    time_from_low_63 = prices.rolling(63).apply(lambda x: len(x) - 1 - np.argmin(x), raw=True)
+    time_from_high_252 = prices.rolling(252).apply(lambda x: len(x) - 1 - np.argmax(x), raw=True)
+    time_from_low_252 = prices.rolling(252).apply(lambda x: len(x) - 1 - np.argmin(x), raw=True)
 
     # Macro
     logger.info("Computing macroeconomic features.")
@@ -199,9 +198,9 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
     )
 
     spy_returns_63d = spy_prices.pct_change(63, fill_method=None).to_frame()
-    market_returns_zscore = (
-        spy_returns_63d - spy_returns_63d.rolling(252).mean().shift(1)
-    ) / (spy_returns_63d.rolling(252).std().shift(1))
+    market_returns_zscore = (spy_returns_63d - spy_returns_63d.rolling(252).mean().shift(1)) / (
+        spy_returns_63d.rolling(252).std().shift(1)
+    )
     market_returns_zscore_feature = pd.DataFrame(
         np.tile(market_returns_zscore.values.reshape(-1, 1), (1, prices.shape[1])),
         index=prices.index,
@@ -224,9 +223,7 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
     corr_spy_63d = pd.DataFrame(index=prices.index, columns=prices.columns)
     for ticker in tqdm(prices.columns, desc="Computing Beta & Corr SPY"):
         r = returns[ticker]
-        beta_63d[ticker] = (
-            r.rolling(63).cov(spy_returns) / spy_returns.rolling(63).var()
-        )
+        beta_63d[ticker] = r.rolling(63).cov(spy_returns) / spy_returns.rolling(63).var()
         corr_spy_63d[ticker] = r.rolling(63).corr(spy_returns)
 
     beta_21 = ret.apply(
@@ -277,7 +274,7 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
         s = df.std(axis=1).values[:, None]
         return (df - m) / (s + 1e-9)
 
-    def compute_ta_indicators(prices, high, low, volumes) -> Dict[str, pd.DataFrame]:
+    def compute_ta_indicators(prices, high, low, volumes) -> dict[str, pd.DataFrame]:
         """
         Computes various TA indicators from the `ta` package in a flexible way.
 
@@ -413,9 +410,7 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
                     indicator = spec["class"](**inputs)
                     df[ticker] = getattr(indicator, spec["method"])()
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to compute {spec['name']} for {ticker}: {e}"
-                    )
+                    logger.warning(f"Failed to compute {spec['name']} for {ticker}: {e}")
                     df[ticker] = np.nan
             indicators[spec["name"]] = df
 
@@ -458,8 +453,7 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
         "month_of_year_sin": month_of_year_sin,
         "is_month_end": is_month_end,
         "is_month_start": is_month_start,
-        "bollinger_zscore": (prices - prices.rolling(63).mean())
-        / prices.rolling(63).std(),
+        "bollinger_zscore": (prices - prices.rolling(63).mean()) / prices.rolling(63).std(),
         "volatility_zscore": volatility_zscore,
         "10yTbill": ten_year,
         "yield_curve_slope": ten_year_minus,
@@ -511,11 +505,7 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
     # Drop worst rows (≥10% NaNs)
     X = X.dropna(thresh=int(0.9 * X.shape[1]))
     # Forward + Backward fill
-    X = (
-        X.groupby(level=1)
-        .apply(lambda g: g.ffill(limit=10))
-        .reset_index(level=0, drop=True)
-    )
+    X = X.groupby(level=1).apply(lambda g: g.ffill(limit=10)).reset_index(level=0, drop=True)
 
     # Safe fallback for sparse leftovers
     X = X.fillna(X.median())
@@ -545,10 +535,10 @@ def build_features() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
 
 def build_meta_features(
     X_base: pd.DataFrame,
-    base_model_lgbm,  # expects .predict_proba(), .predict(), and either .classes_ or .class_labels_
-    base_model_mlp,  # your (Rolling)VectorScaledSoftmax wrapper with .predict_proba/.predict and .class_labels_
-    class_order=(-1, 0, 1),
-    regime_cols=(
+    base_model_lgbm: Any,
+    base_model_mlp: Any,
+    class_order: tuple[int, int, int] = (-1, 0, 1),
+    regime_cols: Sequence[str] = (
         "vix",
         "volatility_zscore",
         "volatility_63d",
@@ -581,12 +571,8 @@ def build_meta_features(
     proba_clf = _proba_df(base_model_lgbm, X_base, "proba_clf", class_order)
     proba_mlp = _proba_df(base_model_mlp, X_base, "proba_mlp", class_order)
 
-    clf_pred = pd.Series(
-        base_model_lgbm.predict(X_base), index=X_base.index, name="clf_pred"
-    )
-    mlp_pred = pd.Series(
-        base_model_mlp.predict(X_base), index=X_base.index, name="mlp_pred"
-    )
+    clf_pred = pd.Series(base_model_lgbm.predict(X_base), index=X_base.index, name="clf_pred")
+    mlp_pred = pd.Series(base_model_mlp.predict(X_base), index=X_base.index, name="mlp_pred")
 
     # --- utilities (vectorized) ---
     eps = 1e-12
@@ -613,22 +599,12 @@ def build_meta_features(
     )
 
     # --- core meta features ---
-    proba_gap_clf = (proba_clf[c_p1] - proba_clf[[c_0, c_m1]].max(1)).rename(
-        "proba_gap_clf"
-    )
-    proba_gap_mlp = (proba_mlp[m_p1] - proba_mlp[[m_0, m_m1]].max(1)).rename(
-        "proba_gap_mlp"
-    )
+    proba_gap_clf = (proba_clf[c_p1] - proba_clf[[c_0, c_m1]].max(1)).rename("proba_gap_clf")
+    proba_gap_mlp = (proba_mlp[m_p1] - proba_mlp[[m_0, m_m1]].max(1)).rename("proba_gap_mlp")
     model_agreement = (clf_pred.values == mlp_pred.values).astype(int)
-    model_agreement = pd.Series(
-        model_agreement, index=X_base.index, name="model_agreement"
-    )
-    confidence_agreement = (
-        (proba_clf[c_p1] - proba_mlp[m_p1]).abs().rename("confidence_agreement")
-    )
-    confidence_mean = ((proba_clf[c_p1] + proba_mlp[m_p1]) * 0.5).rename(
-        "confidence_mean"
-    )
+    model_agreement = pd.Series(model_agreement, index=X_base.index, name="model_agreement")
+    confidence_agreement = (proba_clf[c_p1] - proba_mlp[m_p1]).abs().rename("confidence_agreement")
+    confidence_mean = ((proba_clf[c_p1] + proba_mlp[m_p1]) * 0.5).rename("confidence_mean")
     entropy_clf = entropy(proba_clf).rename("entropy_clf")
     entropy_mlp = entropy(proba_mlp).rename("entropy_mlp")
 
@@ -641,12 +617,12 @@ def build_meta_features(
     nt_mlp = (1.0 - proba_mlp[m_0]).rename("non_timeout_mlp")
 
     # Log-odds ratios (more linear for meta learners)
-    logodds_clf = (
-        np.log(proba_clf[c_p1] + eps) - np.log(proba_clf[c_m1] + eps)
-    ).rename("logodds_clf")
-    logodds_mlp = (
-        np.log(proba_mlp[m_p1] + eps) - np.log(proba_mlp[m_m1] + eps)
-    ).rename("logodds_mlp")
+    logodds_clf = (np.log(proba_clf[c_p1] + eps) - np.log(proba_clf[c_m1] + eps)).rename(
+        "logodds_clf"
+    )
+    logodds_mlp = (np.log(proba_mlp[m_p1] + eps) - np.log(proba_mlp[m_m1] + eps)).rename(
+        "logodds_mlp"
+    )
 
     # Margin (max minus second max) per model
     margin_clf = top2_gap(proba_clf).rename("margin_clf")
@@ -657,8 +633,7 @@ def build_meta_features(
     Q = proba_mlp.values
     M = 0.5 * (P + Q)
     js_div = 0.5 * (
-        (P * np.log((P + eps) / (M + eps))).sum(1)
-        + (Q * np.log((Q + eps) / (M + eps))).sum(1)
+        (P * np.log((P + eps) / (M + eps))).sum(1) + (Q * np.log((Q + eps) / (M + eps))).sum(1)
     )
     js_div = pd.Series(js_div, index=X_base.index, name="js_div")
 
@@ -672,12 +647,7 @@ def build_meta_features(
         if col in X_base.columns:
             regime.append(X_base[col].astype(float).rename(col))
     if regime:
-        regime = (
-            pd.concat(regime, axis=1)
-            .reindex(X_base.index)
-            .fillna(method="ffill")
-            .fillna(0.0)
-        )
+        regime = pd.concat(regime, axis=1).reindex(X_base.index).fillna(method="ffill").fillna(0.0)
     else:
         regime = pd.DataFrame(index=X_base.index)
 
@@ -712,40 +682,63 @@ def build_meta_features(
     X_meta.replace([np.inf, -np.inf], np.nan, inplace=True)
     X_meta.fillna(0.0, inplace=True)
 
-    logger.info(f"X_meta shape: {X_meta.shape}")
+    logger.info("X_meta shape: %s", X_meta.shape)
     return X_meta
 
 
-def main():
+def build_meta_features_lean(
+    X_base: pd.DataFrame, base_model_lgbm: Any, base_model_mlp: Any
+) -> pd.DataFrame:
+    """
+    Build stacking meta-features from two base models (LGBM, MLP).
+    Leakage-free if the supplied models are OOS for X_base.
+    Fewer features included
+    """
+    X_full = build_meta_features(X_base, base_model_lgbm, base_model_mlp)
+    cols = [
+        # calibrated probs
+        "proba_clf_-1",
+        "proba_clf_0",
+        "proba_clf_1",
+        "proba_mlp_-1",
+        "proba_mlp_0",
+        "proba_mlp_1",
+        # confidence summaries
+        "margin_clf",
+        "margin_mlp",
+        "logodds_clf",
+        "logodds_mlp",
+        # agreements / blends
+        "model_agreement",
+        "confidence_agreement",
+        "confidence_mean",
+        "blend_p1",
+        # non-timeout
+        "non_timeout_clf",
+        "non_timeout_mlp",
+        # simple regimes
+        "vix",
+        "vix_high",
+        "volatility_zscore",
+        "10yTbill",
+        "yield_curve_slope",
+        "month_of_year_sin",
+        # (optional) "js_div",
+    ]
+    return X_full.reindex(columns=cols)
+
+
+def main() -> None:
     logger.info("Starting main feature generation pipeline.")
     X, Y, label_times = build_features()
+    Path(config.X).parent.mkdir(parents=True, exist_ok=True)
+    Path(config.Y).parent.mkdir(parents=True, exist_ok=True)
     X.to_parquet(config.X)
     Y.to_frame().to_parquet(config.Y)
-    logger.info(f"Saved features to {config.X}")
-    logger.info(f"Saved labels to {config.Y}")
+    logger.info("Saved features to %s", config.X)
+    logger.info("Saved labels to %s", config.Y)
     logger.info("Feature generation pipeline completed.")
 
 
 if __name__ == "__main__":
     main()
-
-
-
-
-def build_meta_features_lean(X_base, base_model_lgbm, base_model_mlp):
-    X_full = build_meta_features(X_base, base_model_lgbm, base_model_mlp)
-    cols = [
-        # calibrated probs
-        "proba_clf_-1","proba_clf_0","proba_clf_1",
-        "proba_mlp_-1","proba_mlp_0","proba_mlp_1",
-        # confidence summaries
-        "margin_clf","margin_mlp","logodds_clf","logodds_mlp",
-        # agreements / blends
-        "model_agreement","confidence_agreement","confidence_mean","blend_p1",
-        # non-timeout
-        "non_timeout_clf","non_timeout_mlp",
-        # simple regimes
-        "vix","vix_high","volatility_zscore","10yTbill","yield_curve_slope","month_of_year_sin",
-        # (optional) "js_div",
-    ]
-    return X_full.reindex(columns=cols)

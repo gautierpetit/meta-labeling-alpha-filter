@@ -1,137 +1,184 @@
+"""Convenience data loaders for project assets (prices, volumes, features, labels).
+
+These functions centralize file I/O and basic alignment logic so callers can
+assume consistent indices and dtypes. They favor explicit typing and simple
+error messages when files are missing.
+"""
+
+import logging
+from pathlib import Path
+
 import pandas as pd
 
 import src.config as config
 
+logger = logging.getLogger(__name__)
+
 
 def load_prices() -> pd.DataFrame:
-    """
-    Load filtered daily price data.
+    """Load filtered daily price DataFrame from disk.
 
     Returns:
-        pd.DataFrame: DataFrame containing daily price data.
+        pd.DataFrame: daily price matrix indexed by trading date with
+        tickers as columns.
+
+    Raises:
+        FileNotFoundError: If the configured parquet file does not exist.
     """
-    return pd.read_parquet(config.FILTERED_PRICES)
+    path = Path(config.FILTERED_PRICES)
+    if not path.exists():
+        logger.error("Filtered prices file not found: %s", path)
+        raise FileNotFoundError(path)
+    return pd.read_parquet(path)
 
 
 def load_monthly_prices() -> pd.DataFrame:
-    """
-    Return month-end resampled filtered prices.
+    """Return month-end resampled filtered prices.
 
-    Returns:
-        pd.DataFrame: DataFrame containing month-end prices.
+    Uses calendar month-end periods and takes the last available price in
+    each month.
     """
     daily = load_prices()
-    return daily.resample("ME").last()
+    return daily.resample("M").last()
 
 
 def load_returns() -> pd.DataFrame:
-    """
-    Load daily returns calculated from price data.
+    """Compute daily returns from filtered prices.
 
-    Returns:
-        pd.DataFrame: DataFrame containing daily returns.
+    Returns a DataFrame of the same shape as prices where each value is the
+    simple return from the previous trading day.
     """
     prices = load_prices()
-    return prices.pct_change(fill_method=None)
+    return prices.pct_change()
 
 
 def load_volumes() -> pd.DataFrame:
-    """
-    Load filtered daily volume data.
+    """Load filtered daily volumes from disk.
 
     Returns:
-        pd.DataFrame: DataFrame containing daily volume data.
+        pd.DataFrame: volume matrix indexed by trading date.
     """
-    return pd.read_parquet(config.FILTERED_VOLUMES)
+    path = Path(config.FILTERED_VOLUMES)
+    if not path.exists():
+        logger.error("Filtered volumes file not found: %s", path)
+        raise FileNotFoundError(path)
+    return pd.read_parquet(path)
 
 
 def load_low_prices() -> pd.DataFrame:
-    """
-    Load daily low prices.
+    """Load daily low prices.
 
     Returns:
-        pd.DataFrame: DataFrame containing daily low prices.
+        pd.DataFrame: low price matrix.
     """
-    return pd.read_parquet(config.FILTERED_LOW)
+    path = Path(config.FILTERED_LOW)
+    if not path.exists():
+        logger.error("Filtered low prices file not found: %s", path)
+        raise FileNotFoundError(path)
+    return pd.read_parquet(path)
 
 
 def load_high_prices() -> pd.DataFrame:
-    """
-    Load daily high prices.
+    """Load daily high prices.
 
     Returns:
-        pd.DataFrame: DataFrame containing daily high prices.
+        pd.DataFrame: high price matrix.
     """
-    return pd.read_parquet(config.FILTERED_HIGH)
+    path = Path(config.FILTERED_HIGH)
+    if not path.exists():
+        logger.error("Filtered high prices file not found: %s", path)
+        raise FileNotFoundError(path)
+    return pd.read_parquet(path)
 
 
 def load_vix() -> pd.Series:
-    """
-    Load and forward-fill the VIX index for volatility context.
+    """Load VIX closing series and align to the project trading calendar.
 
     Returns:
-        pd.Series: Series containing VIX index aligned with the trading calendar.
+        pd.Series: VIX series indexed by the same dates as filtered prices.
     """
-    vix = pd.read_parquet(config.VIX)
+    path = Path(config.VIX)
+    if not path.exists():
+        logger.error("VIX file not found: %s", path)
+        raise FileNotFoundError(path)
+    vix = pd.read_parquet(path)
+    # Ensure it's a Series
+    if isinstance(vix, pd.DataFrame):
+        vix = vix.squeeze()
     return vix.reindex(load_prices().index).ffill()
 
 
 def load_spy_prices() -> pd.Series:
-    """
-    Load SPY ETF closing prices for use as a benchmark.
+    """Load SPY ETF closing prices (benchmark).
 
-    Returns:
-        pd.Series: Series containing SPY ETF closing prices.
+    Returns a pandas Series of SPY close prices.
     """
-    return pd.read_parquet(config.SPY).squeeze()
+    path = Path(config.SPY)
+    if not path.exists():
+        logger.error("SPY file not found: %s", path)
+        raise FileNotFoundError(path)
+    spy = pd.read_parquet(path)
+    return spy.squeeze()
 
 
 def load_spy_returns() -> pd.Series:
-    """
-    Compute and return daily returns of the SPY ETF.
+    """Return daily simple returns for SPY.
 
     Returns:
-        pd.Series: Series containing daily SPY ETF returns.
+        pd.Series: SPY daily returns aligned to the trading calendar.
     """
     spy_prices = load_spy_prices()
     return spy_prices.pct_change().squeeze()
 
 
 def load_labels() -> pd.Series:
-    """
-    Load saved trade outcomes (Y labels).
+    """Load saved outcome labels (Y).
 
     Returns:
-        pd.Series: Series containing trade outcomes.
+        pd.Series: labels indexed by the sample index used in the project.
     """
-    return pd.read_parquet(config.Y).squeeze()
+    path = Path(config.Y)
+    if not path.exists():
+        logger.error("Labels file not found: %s", path)
+        raise FileNotFoundError(path)
+    return pd.read_parquet(path).squeeze()
 
 
 def load_features() -> pd.DataFrame:
-    """
-    Load saved feature matrix (X features).
+    """Load saved feature matrix (X features).
 
     Returns:
-        pd.DataFrame: DataFrame containing feature matrix.
+        pd.DataFrame: feature matrix used for modeling.
     """
-    return pd.read_parquet(config.X)
+    path = Path(config.X)
+    if not path.exists():
+        logger.error("Features file not found: %s", path)
+        raise FileNotFoundError(path)
+    return pd.read_parquet(path)
 
 
 def load_rates() -> pd.DataFrame:
-    """
-    Load the market yield on US Treasury 10 Year (DGS10).
+    """Load macro rate series (10Y and 10Y-3M) and align to trading calendar.
 
     Returns:
-        pd.DataFrame: DataFrame containing market yield data aligned with the trading calendar.
+        pd.DataFrame: columns for the raw 10Y yield and the 10Y-3M spread (or
+        the files provided by the configuration).
     """
-    ten_year = pd.read_csv(config.DGS10)
+    path_10y = Path(config.DGS10)
+    path_spread = Path(config.T10Y3M)
+
+    if not path_10y.exists() or not path_spread.exists():
+        logger.error("Rate files missing: %s, %s", path_10y, path_spread)
+        raise FileNotFoundError((path_10y, path_spread))
+
+    ten_year = pd.read_csv(path_10y)
     ten_year.index = pd.to_datetime(ten_year["observation_date"], format="%Y-%m-%d")
     ten_year = ten_year.reindex(load_prices().index).ffill()
-    ten_year.drop(columns="observation_date", inplace=True)
+    ten_year = ten_year.drop(columns="observation_date")
 
-    ten_year_minus = pd.read_csv(config.T10Y3M)
+    ten_year_minus = pd.read_csv(path_spread)
     ten_year_minus.index = pd.to_datetime(ten_year_minus["observation_date"], format="%Y-%m-%d")
     ten_year_minus = ten_year_minus.reindex(load_prices().index).ffill()
-    ten_year_minus.drop(columns="observation_date", inplace=True)
+    ten_year_minus = ten_year_minus.drop(columns="observation_date")
 
     return pd.concat([ten_year, ten_year_minus], axis=1)

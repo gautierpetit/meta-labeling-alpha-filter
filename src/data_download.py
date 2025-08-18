@@ -1,5 +1,5 @@
 import logging
-from typing import List, Tuple
+from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
@@ -8,13 +8,11 @@ from tqdm import tqdm
 import src.config as config
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def load_constituents(path: str, start_date: str) -> pd.Series:
+def load_constituents(path: str | Path, start_date: str | pd.Timestamp) -> pd.Series:
     """
     Load and normalize S&P 500 constituents from a CSV file.
 
@@ -25,13 +23,17 @@ def load_constituents(path: str, start_date: str) -> pd.Series:
     Returns:
         pd.Series: Normalized constituents data indexed by date.
     """
+    path = Path(path)
     df = pd.read_csv(path)
-    raw = pd.Series(
-        [row.split(",") for row in df.iloc[:, 1]],
-        index=pd.to_datetime(df.iloc[:, 0], format="%Y-%m-%d"),
-    )
-    last_date_before_start = raw.index[raw.index < start_date].max()
-    raw = raw[raw.index >= last_date_before_start]
+
+    dates = pd.to_datetime(df.iloc[:, 0], format="%Y-%m-%d", errors="coerce")
+    raw = pd.Series([str(row).split(",") for row in df.iloc[:, 1]], index=dates)
+
+    start_ts = pd.to_datetime(start_date)
+    last_date_before_start = raw.index[raw.index <= start_ts].max()
+    if pd.isna(last_date_before_start):
+        last_date_before_start = raw.index.min()
+    raw = raw.loc[last_date_before_start:]
 
     # 1) Generic Yahoo normalization: dot -> hyphen
     def yf_norm(t: str) -> str:
@@ -44,16 +46,14 @@ def load_constituents(path: str, start_date: str) -> pd.Series:
         # keep dot/hyphen handled by yf_norm, so no need for BRK.B/BF.B here
     }
 
-    out = []
+    out: list[list[str]] = []
     for tickers in raw:
-        mapped = []
-        seen = set()
+        mapped: list[str] = []
+        seen: set[str] = set()
         for t in tickers:
             t0 = yf_norm(t)
             t1 = SAFE_RENAMES.get(t0, t0)
-            # Prevent collisions created by renames (e.g., CBS/VIAB->PARA was bad)
             if t1 in seen:
-                # keep the original symbol instead of forcing a collision
                 t1 = t0
             seen.add(t1)
             mapped.append(t1)
@@ -62,13 +62,14 @@ def load_constituents(path: str, start_date: str) -> pd.Series:
     constituents = pd.Series(out, index=raw.index)
 
     # Optional: carry forward last set for masking end-boundary
-    constituents.loc[config.DATA_END_DATE] = constituents.iloc[-1]
+    end_ts = pd.to_datetime(config.DATA_END_DATE)
+    if end_ts not in constituents.index:
+        constituents.loc[end_ts] = constituents.iloc[-1]
 
-    return constituents
+    return constituents.sort_index()
 
 
-
-def download_market_data(tickers: List[str], start: str, end: str) -> pd.DataFrame:
+def download_market_data(tickers: list[str], start: str, end: str) -> pd.DataFrame:
     """
     Download historical market data for a list of tickers.
 
@@ -80,9 +81,13 @@ def download_market_data(tickers: List[str], start: str, end: str) -> pd.DataFra
     Returns:
         pd.DataFrame: Historical market data.
     """
-    logger.info(
-        f"Downloading market data for {len(tickers)} tickers from {start} to {end}."
-    )
+    logger.info("Downloading market data for %d tickers from %s to %s.", len(tickers), start, end)
+    if not tickers:
+        logger.warning(
+            "Empty ticker list passed to download_market_data; returning empty DataFrame."
+        )
+        return pd.DataFrame()
+
     return yf.download(
         tickers=tickers,
         start=start,
@@ -96,9 +101,7 @@ def download_market_data(tickers: List[str], start: str, end: str) -> pd.DataFra
     )
 
 
-def build_point_in_time_mask(
-    prices: pd.DataFrame, constituents: pd.Series
-) -> pd.DataFrame:
+def build_point_in_time_mask(prices: pd.DataFrame, constituents: pd.Series) -> pd.DataFrame:
     """
     Build a point-in-time mask for the given prices and constituents.
 
@@ -112,16 +115,22 @@ def build_point_in_time_mask(
     logger.info("Building point-in-time mask.")
     mask = pd.DataFrame(False, index=prices.index, columns=prices.columns)
     for i in tqdm(range(len(constituents) - 1), desc="Building point-in-time mask"):
-        tickers = constituents.iloc[i]
+        tickers = list(constituents.iloc[i])
+        # intersect available columns to avoid KeyError
+        tickers = [t for t in tickers if t in prices.columns]
+        if not tickers:
+            continue
+
         start = constituents.index[i]
         end = constituents.index[i + 1]
         mask.loc[start:end, tickers] = True
+
     return mask
 
 
 def extract_ohlcv(
     master_df: pd.DataFrame,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Extract OHLCV (Open, High, Low, Close, Volume) data from the master DataFrame.
 
@@ -138,9 +147,10 @@ def extract_ohlcv(
     high = master_df.loc[:, (slice(None), "High")]
     low = master_df.loc[:, (slice(None), "Low")]
 
-    for df in [close, volume, high, low]:
+    # Normalize to single-level columns and sort in-place
+    for df in (close, volume, high, low):
         df.columns = df.columns.get_level_values(0)
-        df = df.sort_index(axis=1)  
+        df.sort_index(axis=1, inplace=True)
 
     return close, volume, high, low
 
@@ -168,10 +178,18 @@ def save_filtered_data(
     filtered_high = high.mask(~mask)
     filtered_low = low.mask(~mask)
 
-    filtered_prices.to_parquet(config.FILTERED_PRICES, engine="pyarrow")
-    filtered_volumes.to_parquet(config.FILTERED_VOLUMES, engine="pyarrow")
-    filtered_high.to_parquet(config.FILTERED_HIGH, engine="pyarrow")
-    filtered_low.to_parquet(config.FILTERED_LOW, engine="pyarrow")
+    targets = [
+        (filtered_prices, Path(config.FILTERED_PRICES)),
+        (filtered_volumes, Path(config.FILTERED_VOLUMES)),
+        (filtered_high, Path(config.FILTERED_HIGH)),
+        (filtered_low, Path(config.FILTERED_LOW)),
+    ]
+    for df, target in targets:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            df.to_parquet(target, engine="pyarrow")
+        except Exception:
+            logger.exception("Failed to save filtered data to %s", target)
 
     logger.info("Filtered data saved successfully.")
 
@@ -188,7 +206,7 @@ def _dedupe(df: pd.DataFrame) -> pd.DataFrame:
     """
     if df.columns.is_unique:
         return df
-    logging.warning("De-duplicating duplicate tickers...")
+    logger.warning("De-duplicating duplicate tickers...")
     return df.T.groupby(level=0).mean().T
 
 
@@ -206,14 +224,12 @@ def main() -> None:
     tickers = sorted(set(t for sublist in constituents for t in sublist))
 
     # === Download historical data ===
-    master_df = download_market_data(
-        tickers, config.DATA_START_DATE, config.DATA_END_DATE
-    )
+    master_df = download_market_data(tickers, config.DATA_START_DATE, config.DATA_END_DATE)
 
     prices, volumes, prices_high, prices_low = extract_ohlcv(master_df)
 
     # De-duplicate columns
-    prices  = _dedupe(prices)
+    prices = _dedupe(prices)
     volumes = _dedupe(volumes)
     prices_high = _dedupe(prices_high)
     prices_low = _dedupe(prices_low)
@@ -229,8 +245,7 @@ def main() -> None:
         offenders = spike_mask.sum().sort_values(ascending=False).head(10)
         logging.warning("Clipping extreme returns; top offenders: %s", offenders.index.tolist())
         # null out just the offending points
-        prices = prices.mask(spike_mask) 
-
+        prices = prices.mask(spike_mask)
 
     # === Download macro indicators ===
     logger.info("Downloading macro indicators.")
@@ -252,13 +267,10 @@ def main() -> None:
     # === Build point-in-time mask ===
     mask = build_point_in_time_mask(prices, constituents)
 
-
     # === Validate and save ===
     assert prices.shape == mask.shape, "Prices and mask shapes do not match."
     assert (prices.index == mask.index).all(), "Prices and mask indices do not match."
-    assert (prices.columns == mask.columns).all(), (
-        "Prices and mask columns do not match."
-    )
+    assert (prices.columns == mask.columns).all(), "Prices and mask columns do not match."
 
     save_filtered_data(prices, volumes, prices_high, prices_low, mask)
 

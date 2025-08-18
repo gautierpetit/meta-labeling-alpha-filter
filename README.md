@@ -147,7 +147,7 @@ meta-labeling-alpha-filter/
 
 ## Possible expansions
 
-#TODO: 
+#TODO:
 
 ---
 

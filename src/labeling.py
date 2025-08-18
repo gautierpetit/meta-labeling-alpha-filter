@@ -1,22 +1,34 @@
+"""Labeling utilities implementing the triple-barrier method and helper scans.
+
+This module contains two implementations of the triple-barrier labeling
+algorithm (a straightforward looped version and a vectorized implementation),
+plus helpers to scan parameter grids (TP/SL multipliers and holding periods).
+"""
+
+from __future__ import annotations
+
 import itertools
-from typing import Dict, List, Tuple
+import logging
+from pathlib import Path
 
 import matplotlib.pyplot as plt
-import pandas as pd
 import numpy as np
+import pandas as pd
 import seaborn as sns
 from tqdm import tqdm
 
 import src.config as config
+
+logger = logging.getLogger(__name__)
 
 
 def apply_triple_barrier_ref(
     prices: pd.DataFrame,
     daily_signals: pd.DataFrame,
     volatility: pd.DataFrame,
-    tp_sl_factor: Tuple[float, float] = config.PT_SL_FACTOR,
+    tp_sl_factor: tuple[float, float] = config.PT_SL_FACTOR,
     max_holding_period: int = config.MAX_HOLDING_PERIOD,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Applies the triple barrier method for labeling trades.
 
@@ -66,14 +78,10 @@ def apply_triple_barrier_ref(
 
             label, exit_date = 0, None
             for future_date, price in future_prices.items():
-                if (side == 1 and price >= tp_level) or (
-                    side == -1 and price <= tp_level
-                ):
+                if (side == 1 and price >= tp_level) or (side == -1 and price <= tp_level):
                     label, exit_date = 1, future_date  # Take-profit hit
                     break
-                elif (side == 1 and price <= sl_level) or (
-                    side == -1 and price >= sl_level
-                ):
+                elif (side == 1 and price <= sl_level) or (side == -1 and price >= sl_level):
                     label, exit_date = -1, future_date  # Stop-loss hit
                     break
 
@@ -84,24 +92,22 @@ def apply_triple_barrier_ref(
             if exit_date:
                 t1_matrix.at[date, ticker] = exit_date
 
-    label_times = (
-        t1_matrix.stack()
-        .rename("t1")
-        .to_frame()
-        .assign(t0=lambda df: df.index.get_level_values(0))
-    )
+    # make types explicit for static checkers: stack() returns a Series
+    # Ensure t1_series is explicitly a Series
+    stacked: pd.Series = t1_matrix.stack()
+    t1_series: pd.Series = stacked.rename("t1")
+    label_times = t1_series.to_frame().assign(t0=lambda df: df.index.get_level_values(0))
 
     return labels, label_times
-
 
 
 def apply_triple_barrier(
     prices: pd.DataFrame,
     daily_signals: pd.DataFrame,
     volatility: pd.DataFrame,
-    tp_sl_factor: Tuple[float, float] = config.PT_SL_FACTOR,
+    tp_sl_factor: tuple[float, float] = config.PT_SL_FACTOR,
     max_holding_period: int = config.MAX_HOLDING_PERIOD,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Vectorized triple-barrier labeling with identical outputs to the loop version.
 
@@ -113,7 +119,7 @@ def apply_triple_barrier(
     idx = prices.index
     cols = prices.columns
 
-    P = prices.to_numpy(copy=False)          # (T, N)
+    P = prices.to_numpy(copy=False)  # (T, N)
     V = volatility.reindex(idx).to_numpy(copy=False)
     S = daily_signals.reindex(idx).to_numpy(copy=False).astype(np.int8)
 
@@ -122,10 +128,10 @@ def apply_triple_barrier(
 
     # Outputs (float for labels to allow NaN; exit positions as int with -1=unset)
     labels_arr = np.full((T, N), np.nan, dtype=float)
-    exit_pos   = np.full((T, N), -1, dtype=np.int32)
+    exit_pos = np.full((T, N), -1, dtype=np.int32)
 
     for i in range(T):
-        sides = S[i, :]                         # -1, 0, +1
+        sides = S[i, :]  # -1, 0, +1
         active_mask = sides != 0
         if not np.any(active_mask):
             continue
@@ -138,7 +144,7 @@ def apply_triple_barrier(
             continue
 
         col_idx = np.where(active_mask)[0][valid]
-        s = sides[active_mask][valid]          # (-1,+1)
+        s = sides[active_mask][valid]  # (-1,+1)
         e = entry[valid]
         v = vol_i[valid]
 
@@ -150,15 +156,15 @@ def apply_triple_barrier(
         end = min(i + max_holding_period, T - 1)
         if end <= i:
             continue
-        W = end - i                             # number of rows in the window
-        Wslice = P[i + 1 : end + 1, :][:, col_idx]   # (W, K)
+        W = end - i  # number of rows in the window
+        Wslice = P[i + 1 : end + 1, :][:, col_idx]  # (W, K)
 
         # Vectorized hits with side-specific inequalities
         K = len(col_idx)
         hits_tp = np.zeros((W, K), dtype=bool)
         hits_sl = np.zeros((W, K), dtype=bool)
 
-        is_long = (s == 1)
+        is_long = s == 1
         if np.any(is_long):
             j = np.where(is_long)[0]
             hits_tp[:, j] = Wslice[:, j] >= tp[j]
@@ -180,7 +186,7 @@ def apply_triple_barrier(
 
         tp_first = (idx_tp < idx_sl) & has_event
         sl_first = (idx_sl < idx_tp) & has_event
-        tie_tp   = (idx_tp == idx_sl) & (idx_tp < W)   # TP before SL on tie
+        tie_tp = (idx_tp == idx_sl) & (idx_tp < W)  # TP before SL on tie
 
         # Assign labels at entry row i, selected columns
         if np.any(tp_first | tie_tp):
@@ -211,14 +217,12 @@ def apply_triple_barrier(
     return labels, label_times
 
 
-
-
 def scan_tp_sl_grid(
     prices: pd.DataFrame,
     daily_signals: pd.DataFrame,
     volatility: pd.DataFrame,
-    tp_range: Tuple[int, int] = (1, 4),
-    sl_range: Tuple[int, int] = (1, 4),
+    tp_range: tuple[int, int] = (1, 4),
+    sl_range: tuple[int, int] = (1, 4),
     max_holding_period: int = config.MAX_HOLDING_PERIOD,
 ) -> pd.DataFrame:
     """
@@ -244,12 +248,10 @@ def scan_tp_sl_grid(
     pd.DataFrame
         DataFrame of (tp, sl) vs label proportions.
     """
-    results: List[Dict] = []
+    results: list[dict] = []
 
     for tp, sl in tqdm(
-        itertools.product(
-            range(tp_range[0], tp_range[1] + 1), range(sl_range[0], sl_range[1] + 1)
-        )
+        itertools.product(range(tp_range[0], tp_range[1] + 1), range(sl_range[0], sl_range[1] + 1))
     ):
         labels, _ = apply_triple_barrier(
             prices=prices,
@@ -281,18 +283,27 @@ def scan_tp_sl_grid(
         + results_df["label_-1"] * np.log(results_df["label_-1"] + 1e-9)
     )
     results_df.sort_values(by=["label_0", "label_balance"], inplace=True)
-    results_df.to_excel(config.FIGURES_DIR / f"tp_sl_grid_{max_holding_period}.xlsx")
+    Path(config.FIGURES_DIR).mkdir(parents=True, exist_ok=True)
+    results_df.to_excel(Path(config.FIGURES_DIR) / f"tp_sl_grid_{max_holding_period}.xlsx")
 
     # Pivot data for plotting
     pivot_entropy = results_df.pivot(index="tp", columns="sl", values="entropy")
     pivot_label1 = results_df.pivot(index="tp", columns="sl", values="label_1")
     pivot_label0 = results_df.pivot(index="tp", columns="sl", values="label_0")
-    pivot_label_1 = results_df.pivot(index="tp", columns="sl", values="label_-1")
+    pivot_label_minus1 = results_df.pivot(index="tp", columns="sl", values="label_-1")
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
     # Use entropy as the background color
-    sns.heatmap(pivot_entropy, annot=False, fmt=".2f", cmap="coolwarm", cbar=True, cbar_kws={"label": "Entropy"}, ax=ax)
+    sns.heatmap(
+        pivot_entropy,
+        annot=False,
+        fmt=".2f",
+        cmap="coolwarm",
+        cbar=True,
+        cbar_kws={"label": "Entropy"},
+        ax=ax,
+    )
 
     # Overlay the full label distribution in each cell
     for i in range(pivot_entropy.shape[0]):
@@ -301,17 +312,17 @@ def scan_tp_sl_grid(
             sl = pivot_entropy.columns[j]
             v1 = pivot_label1.loc[pt, sl]
             v0 = pivot_label0.loc[pt, sl]
-            v_1 = pivot_label_1.loc[pt, sl]
+            v_1 = pivot_label_minus1.loc[pt, sl]
             text = f"{v1:.0%}\n{v0:.0%}\n{v_1:.0%}"
             ax.text(j + 0.5, i + 0.5, text, ha="center", va="center", color="black")
 
-    ax.set_title(
-        "Label Distribution (PT vs SL) with Entropy\n[label_1 / label_0 / label_-1]"
-    )
+    ax.set_title("Label Distribution (PT vs SL) with Entropy\n[label_1 / label_0 / label_-1]")
     plt.xlabel("Stop-Loss (SL × σ)")
     plt.ylabel("Take-Profit (PT × σ)")
     plt.tight_layout()
-    plt.savefig(config.FIGURES_DIR / f"heatmap_TP_SL_{max_holding_period}.png")
+    out_path = Path(config.FIGURES_DIR) / f"heatmap_TP_SL_{max_holding_period}.png"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path)
     plt.close()
 
     return results_df
@@ -321,8 +332,8 @@ def scan_holding_period_range(
     prices: pd.DataFrame,
     daily_signals: pd.DataFrame,
     volatility: pd.DataFrame,
-    tp_sl_factor: Tuple[float, float],
-    holding_period_range: Tuple[int, int],
+    tp_sl_factor: tuple[float, float],
+    holding_period_range: tuple[int, int],
 ) -> pd.DataFrame:
     """
     Scan a range of max_holding_period values for a fixed tp/sl factor and evaluate label distributions.
@@ -345,11 +356,10 @@ def scan_holding_period_range(
     pd.DataFrame
         DataFrame of max_holding_period vs label proportions.
     """
-    results: List[Dict] = []
+    results: list[dict] = []
 
-    for max_holding_period in tqdm(
-        range(holding_period_range[0], holding_period_range[1])
-    ):
+    # include upper bound
+    for max_holding_period in tqdm(range(holding_period_range[0], holding_period_range[1] + 1)):
         labels, _ = apply_triple_barrier(
             prices=prices,
             daily_signals=daily_signals,
@@ -379,8 +389,9 @@ def scan_holding_period_range(
         + results_df["label_-1"] * np.log(results_df["label_-1"] + 1e-9)
     )
     results_df.sort_values(by=["label_0", "label_balance"], inplace=True)
+    Path(config.FIGURES_DIR).mkdir(parents=True, exist_ok=True)
     results_df.to_excel(
-        config.FIGURES_DIR
+        Path(config.FIGURES_DIR)
         / f"holding_period_scan_tp{tp_sl_factor[0]}_sl{tp_sl_factor[1]}.xlsx"
     )
 
@@ -391,19 +402,16 @@ def scan_holding_period_range(
         results_df["max_holding_period"],
         results_df["label_1"],
         label="Label 1 (Good trade)",
-
     )
     ax.plot(
         results_df["max_holding_period"],
         results_df["label_0"],
         label="Label 0 (Timeout)",
-
     )
     ax.plot(
         results_df["max_holding_period"],
         results_df["label_-1"],
         label="Label -1 (Bad trade)",
-
     )
 
     # Add a secondary y-axis for entropy
@@ -425,14 +433,16 @@ def scan_holding_period_range(
     ax.set_xlabel("Max Holding Period (days)")
     ax.set_ylabel("Proportion")
     ax.legend(loc="lower left")
-    ax.grid(True, linestyle='-')
+    ax.grid(True, linestyle="-")
 
     # Save the plot
     plt.tight_layout()
-    plt.savefig(
-        config.FIGURES_DIR
+    out_path = (
+        Path(config.FIGURES_DIR)
         / f"holding_period_distribution_entropy_tp{tp_sl_factor[0]}_sl{tp_sl_factor[1]}.png"
     )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path)
     plt.close()
 
     return results_df

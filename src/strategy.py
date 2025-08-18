@@ -1,12 +1,17 @@
+"""Signal generation and simple strategy helpers.
+
+This module exposes a small signal generator based on
+monthly momentum and a lightweight function to compute the daily
+strategy returns.
+"""
+
 import logging
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 import src.config as config
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
 
@@ -41,30 +46,39 @@ def get_daily_signals(
     """
     logger.info("Generating daily trading signals.")
 
-    momentum = monthly_prices.pct_change(
-        12, fill_method=None
-    ) - monthly_prices.pct_change(1, fill_method=None)
+    # Defensive alignment: ensure same tickers/columns as daily prices
+    if monthly_prices.columns.tolist() != prices.columns.tolist():
+        monthly_prices = monthly_prices.reindex(columns=prices.columns)
+
+    # Use explicit periods to avoid deprecated keyword usage
+    momentum = monthly_prices.pct_change(periods=12) - monthly_prices.pct_change(periods=1)
     daily_signals = pd.DataFrame(0, index=prices.index, columns=prices.columns)
 
     for date in momentum.index:
-        momentums = momentum.loc[date]
+        # Ensure momentums is a Series before indexing
+        momentums: pd.Series = momentum.loc[date]
         start = date + pd.offsets.MonthEnd(skip_months)
         end = start + pd.offsets.MonthEnd(hold_months - 1)
 
+        # Cast quantile results to float to avoid type ambiguity
+        long_thresh = float(momentums.quantile(config.TOP_QUANTILE))
         if long_only:
-            long_thresh = momentums.quantile(config.TOP_QUANTILE)
-            longs = momentums[momentums >= long_thresh].index
-            daily_signals.loc[start:end, longs] = 1
+            longs_mask = momentums >= long_thresh
+            longs: list[str] = momentums.index[longs_mask].tolist()
+            if longs:
+                daily_signals.loc[start:end, longs] = 1
         else:
-            long_thresh = momentums.quantile(config.TOP_QUANTILE)
-            short_thresh = momentums.quantile(config.BOTTOM_QUANTILE)
-            longs = momentums[momentums >= long_thresh].index
-            shorts = momentums[momentums <= short_thresh].index
-            daily_signals.loc[start:end, longs] = 1
-            daily_signals.loc[start:end, shorts] = -1
+            short_thresh = float(momentums.quantile(config.BOTTOM_QUANTILE))
+            longs_mask = momentums >= long_thresh
+            short_mask = momentums <= short_thresh
+            longs_list: list[str] = momentums.index[longs_mask].tolist()
+            shorts_list: list[str] = momentums.index[short_mask].tolist()
+            if longs_list:
+                daily_signals.loc[start:end, longs_list] = 1
+            if shorts_list:
+                daily_signals.loc[start:end, shorts_list] = -1
 
     daily_signals = daily_signals.where(~prices.isna(), other=0)
-    
 
     logger.info("Daily trading signals generated successfully.")
     return daily_signals
@@ -90,10 +104,10 @@ def compute_momentum(
     """
     logger.info("Computing momentum strategy returns.")
 
-    daily_returns = prices.pct_change(fill_method=None)
+    daily_returns = prices.pct_change()
     active = daily_signals != 0
-    valid  = daily_returns.notna()
-    used   = active & valid
+    valid = daily_returns.notna()
+    used = active & valid
 
     strategy_returns = daily_returns.where(used, 0.0) * daily_signals.where(used, 0.0)
     den = used.sum(axis=1).replace(0, np.nan)

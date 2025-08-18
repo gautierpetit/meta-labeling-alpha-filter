@@ -1,33 +1,36 @@
+"""Model helpers: feature scaling and LightGBM training utilities.
+
+This module contains helpers used across the
+project for scaling features, splitting folds and training LightGBM
+classifiers. The classes at the bottom provide lightweight wrappers
+for post-hoc vector-scaling calibration for LightGBM models.
+"""
+
 import logging
-from typing import Literal, Tuple
+from collections.abc import Sequence
+from typing import Any, Literal
 
 import joblib
-
-import pandas as pd
-import numpy as np
 import lightgbm as lgb
+import numpy as np
+import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.base import BaseEstimator
 from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
-from sklearn.preprocessing import StandardScaler, LabelEncoder
 from skopt import BayesSearchCV
-from src.utils import _rolling_windows
 
 import src.config as config
-from src.config import (
-    FOLD1_END,
-    FOLD1_START,
-    FOLD2_END,
-    FOLD2_START,
-    FOLD3_END,
-    FOLD3_START,
-)
+from src.config import FOLD1_END, FOLD1_START, FOLD2_END, FOLD2_START, FOLD3_END, FOLD3_START
+from src.utils import _rolling_windows
 
 logger = logging.getLogger(__name__)
 
 
-def scale_features(X: pd.DataFrame, return_scaler=False) -> pd.DataFrame:
+def scale_features(
+    X: pd.DataFrame, return_scaler: bool = False
+) -> pd.DataFrame | tuple[pd.DataFrame, StandardScaler]:
     """
     Standardize features using StandardScaler.
 
@@ -46,7 +49,7 @@ def scale_features(X: pd.DataFrame, return_scaler=False) -> pd.DataFrame:
 
 def split_train_test(
     X: pd.DataFrame, Y: pd.Series
-) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series]:
     """
     Split feature matrix and labels into 3 folds using config-defined date ranges.
 
@@ -90,12 +93,10 @@ def train_model(
     y_enc = le.fit_transform(y_raw)  # maps -1, 0, 1 → 0, 1, 2
 
     # Get class weights in encoded space
-    w_arr = compute_class_weight(
-        class_weight="balanced", classes=np.unique(y_enc), y=y_enc
-    )
+    w_arr = compute_class_weight(class_weight="balanced", classes=np.unique(y_enc), y=y_enc)
 
     # Map weights back to original labels {-1, 0, 1}
-    class_weight = {cls: w for cls, w in zip(le.classes_, w_arr)}
+    class_weight = {cls: w for cls, w in zip(le.classes_, w_arr, strict=False)}
 
     lgbm = LGBMClassifier(
         device_type="gpu",
@@ -169,14 +170,31 @@ def train_model(
     return clf_final
 
 
-
 class VectorScaledSoftmaxLGBM:
-    """
-    Vector scaling for LightGBM multiclass using raw scores (logits).
-    Exposes predict_proba / predict and class_labels_ similar to your other wrappers.
+    """Post-hoc vector-scaling calibration for LightGBM multiclass models.
+
+    The wrapper accepts a trained LightGBM `LGBMClassifier` and applies per-class
+    affine rescaling of logits z' = a * z + b followed by a softmax. It exposes
+    `predict_proba` and `predict` compatible with sklearn-like estimators.
     """
 
-    def __init__(self, lgbm_model, class_labels, a, b):
+    def __init__(
+        self,
+        lgbm_model: LGBMClassifier,
+        class_labels: Sequence[Any],
+        a: np.ndarray,
+        b: np.ndarray,
+    ) -> None:
+        """Initialize the calibrated wrapper.
+
+        Args:
+            lgbm_model: A fitted LightGBM `LGBMClassifier` instance.
+            class_labels: Iterable of original class labels ordered to match
+                the columns of the LightGBM raw scores (logits).
+            a: Per-class scaling coefficients (shape (K,)).
+            b: Per-class bias terms (shape (K,)).
+        """
+        # store provided objects; do not mutate inputs
         self.model = lgbm_model
         self.class_labels_ = list(class_labels)
         self.a = np.asarray(a, dtype=np.float64)
@@ -184,21 +202,29 @@ class VectorScaledSoftmaxLGBM:
         self.K = len(self.class_labels_)
 
     @staticmethod
-    def _softmax_np(z):
+    def _softmax_np(z: np.ndarray) -> np.ndarray:
+        """Numerically-stable softmax over rows of z."""
         z = z - np.max(z, axis=1, keepdims=True)
         ez = np.exp(z)
         return ez / np.sum(ez, axis=1, keepdims=True)
 
     @staticmethod
     def _fit_vs(
-        logits, y_int, K, reg=1e-3, lr=0.05, max_iter=1000, tol=1e-7, patience=20
-    ):
+        logits: np.ndarray,
+        y_int: np.ndarray,
+        K: int,
+        reg: float = 1e-3,
+        lr: float = 0.05,
+        max_iter: int = 1000,
+        tol: float = 1e-7,
+        patience: int = 20,
+    ) -> tuple[np.ndarray, np.ndarray]:
         # simple GD on (a,b) per class with L2 regularization
         a = np.ones(K, dtype=np.float64)
         b = np.zeros(K, dtype=np.float64)
         y_onehot = np.eye(K, dtype=np.float64)[y_int]
         best_loss, no_improve = np.inf, 0
-        for t in range(max_iter):
+        for _ in range(max_iter):
             z = logits * a[np.newaxis, :] + b[np.newaxis, :]
             p = VectorScaledSoftmaxLGBM._softmax_np(z)
             # cross-entropy + reg
@@ -223,16 +249,16 @@ class VectorScaledSoftmaxLGBM:
     @classmethod
     def from_validation(
         cls,
-        lgbm_model,
-        label_map,
-        X_val,
-        y_val_int,
-        reg=1e-3,
-        lr=0.05,
-        max_iter=1000,
-        tol=1e-7,
-        patience=20,
-    ):
+        lgbm_model: LGBMClassifier,
+        label_map: dict[Any, int],
+        X_val: pd.DataFrame,
+        y_val_int: np.ndarray,
+        reg: float = 1e-3,
+        lr: float = 0.05,
+        max_iter: int = 1000,
+        tol: float = 1e-7,
+        patience: int = 20,
+    ) -> "VectorScaledSoftmaxLGBM":
         logits = lgbm_model.predict(X_val, raw_score=True)
         # LightGBM returns shape (n, K) for multiclass raw scores
         class_labels = sorted(label_map.keys(), key=lambda k: label_map[k])
@@ -249,26 +275,53 @@ class VectorScaledSoftmaxLGBM:
         return cls(lgbm_model, class_labels, a, b)
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        """Return calibrated class probabilities for rows in X.
+
+        This method expects X to be the same feature matrix used to obtain the
+        LightGBM raw scores (no additional scaling is applied here).
+        """
         logits = self.model.predict(X, raw_score=True)
         z = logits * self.a[np.newaxis, :] + self.b[np.newaxis, :]
         return self._softmax_np(z)
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
+        """Return the predicted class labels for rows in X.
+
+        The result is an ndarray of the original class labels (e.g. -1, 0, 1).
+        """
         P = self.predict_proba(X)
         idx = np.argmax(P, axis=1)
         return np.array([self.class_labels_[i] for i in idx])
 
 
 class RollingVectorScaledSoftmaxLGBM:
-    """
-    Rolling OOS vector scaling for LightGBM on Fold-2 (same behavior as MLP rolling).
+    """Rolling out-of-sample vector-scaling for LightGBM.
+
+    This class builds per-segment (time window) vector-scaling parameters
+    (a, b) computed on calibration slices and applied to prediction windows.
     """
 
-    def __init__(self, lgbm_model, class_labels, segments, default_ab):
+    def __init__(
+        self,
+        lgbm_model: LGBMClassifier,
+        class_labels: Sequence[Any],
+        segments: Sequence[tuple[Any, Any, np.ndarray, np.ndarray]],
+        default_ab: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Create a rolling calibration object.
+
+        Args:
+            lgbm_model: Fitted LightGBM classifier producing raw scores.
+            class_labels: Ordered class labels matching logits columns.
+            segments: Sequence of tuples (start_label, end_label, a, b)
+                where `a` and `b` are ndarray per-class parameters.
+            default_ab: Fallback (a, b) used for timestamps not covered by a
+                segment.
+        """
         self.model = lgbm_model
         self.class_labels_ = list(class_labels)
         self.K = len(self.class_labels_)
-        self.segments = segments  # list of (start_label, end_label, a, b)
+        self.segments = list(segments)
         self.default_a, self.default_b = default_ab
 
     @classmethod
@@ -312,7 +365,7 @@ class RollingVectorScaledSoftmaxLGBM:
         return cls(lgbm_model, class_labels, segments, (last_a, last_b))
 
     @staticmethod
-    def _softmax_np(z):
+    def _softmax_np(z: np.ndarray) -> np.ndarray:
         z = z - np.max(z, axis=1, keepdims=True)
         ez = np.exp(z)
         return ez / np.sum(ez, axis=1, keepdims=True)
@@ -328,14 +381,12 @@ class RollingVectorScaledSoftmaxLGBM:
             out[mask] = self._softmax_np(z)
         missing = np.isnan(out).any(axis=1)
         if np.any(missing):
-            z = (
-                logits[missing] * self.default_a[np.newaxis, :]
-                + self.default_b[np.newaxis, :]
-            )
+            z = logits[missing] * self.default_a[np.newaxis, :] + self.default_b[np.newaxis, :]
             out[missing] = self._softmax_np(z)
         return out
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
+        """Return predicted original class labels for rows in X."""
         P = self.predict_proba(X)
         idx = np.argmax(P, axis=1)
         return np.array([self.class_labels_[i] for i in idx])
