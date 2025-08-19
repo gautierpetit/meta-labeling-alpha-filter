@@ -155,15 +155,15 @@ LONG_ONLY = False  # Requires retraining
 
 
 MIN_GAP = 0.1
-TOP_K_PER_DAY = 5
+TOP_K_PER_DAY = 3
 
 PROB_WEIGHTING = True  # Use model probabilities to weight signals
-WEIGHT_MODE = "prob"  # Options: "prob", "margin", "odds"
+WEIGHT_MODE = "margin"  # Options: "prob", "margin", "odds"
 TARGET_VOL = 0.2  # -1 to turn off volatility targeting
 VOL_SPAN = 63
 LEVERAGE_CAP = 3  # -1 to turn off leverage cap
 
-MIN_TRADE_EPS = 0.0075
+MIN_TRADE_EPS = 0.01
 LAMBDA_BLEND = 0.2
 
 LONG_SIDE_TC = 0.001  # 10 bps
@@ -181,8 +181,8 @@ MLPV2T = MODELS_DIR / "mlpv2t.keras"
 
 
 # Side-aware thresholds (defaults keep old behavior)
-META_PROBA_THRESHOLD_LONG = 0.50
+META_PROBA_THRESHOLD_LONG = 0.45
 META_PROBA_THRESHOLD_SHORT = 0.50  # slightly stricter for shorts
 
 # Ranking mode for Top-K: "prob" (as-is), "edge", or "logit_edge"
-META_SCORE_MODE = "prob"
+META_SCORE_MODE = "edge"

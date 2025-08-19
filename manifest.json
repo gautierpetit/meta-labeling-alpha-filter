@@ -1,0 +1,481 @@
+{
+  "run_id": "20250818_191149_default",
+  "git_sha": "058a176",
+  "python": "3.10.8",
+  "tensorflow": "2.10.0",
+  "random_state": 42,
+  "label_spec": {
+    "pt_sl_factor": [
+      5,
+      5
+    ],
+    "max_holding_period": 63,
+    "label_map": {
+      "-1": 0,
+      "0": 1,
+      "1": 2
+    }
+  },
+  "fold_dates": {
+    "fold1": [
+      "2010-01-01",
+      "2016-12-31"
+    ],
+    "fold2": [
+      "2017-01-01",
+      "2019-12-31"
+    ],
+    "fold3": [
+      "2020-01-01",
+      "2024-12-31"
+    ]
+  },
+  "features": {
+    "count": 55,
+    "md5_columns": "e4c90a0a86493aad5647da2dc8d113eb",
+    "ordered_columns": [
+      "price_percentile",
+      "market_returns_zscore",
+      "market_vol_zscore",
+      "volatility_63d",
+      "volatility_21d",
+      "vov_63",
+      "vol_trend_63",
+      "price_max_63d",
+      "dist_52w",
+      "mom_12m",
+      "mom_1m",
+      "mdd_63",
+      "dsv_63",
+      "es95_63",
+      "dd_speed_21",
+      "trend_strength_63",
+      "time_from_high_63",
+      "time_from_low_63",
+      "time_from_high_252",
+      "time_from_low_252",
+      "vix",
+      "vix_high",
+      "beta_63d",
+      "beta_instability_63",
+      "corr_spy_63d",
+      "volume",
+      "amihud_illiquidity",
+      "month_of_year_sin",
+      "volatility_zscore",
+      "10yTbill",
+      "yield_curve_slope",
+      "vol_adj_momentum",
+      "momentum_63d",
+      "momentum_63_21d",
+      "mom_persistence_63d",
+      "volume_surge",
+      "return_skew_21d",
+      "return_skew_63d",
+      "volume_skew_21d",
+      "cs_rank_mom21d",
+      "cs_rank_mom63d",
+      "cs_rank_price_percentile",
+      "cs_rank_volume_surge",
+      "cs_z_volatility",
+      "cs_z_beta",
+      "cs_z_corr_spy",
+      "cs_z_rsi",
+      "cs_z_obv",
+      "rsi",
+      "trix",
+      "macd",
+      "adx",
+      "obv",
+      "cmf",
+      "atr"
+    ]
+  },
+  "class_priors": {
+    "fold1": [
+      0.410423,
+      0.159135,
+      0.430442
+    ],
+    "fold2": [
+      0.399393,
+      0.143079,
+      0.457528
+    ],
+    "fold3": [
+      0.406909,
+      0.190842,
+      0.402248
+    ]
+  },
+  "best_hparams": {
+    "clf": {
+      "boosting_type": "gbdt",
+      "class_weight": {
+        "-1": 0.8121707153212404,
+        "0": 2.094660526195796,
+        "1": 0.7743969252035535
+      },
+      "colsample_bytree": 0.58,
+      "importance_type": "split",
+      "learning_rate": 0.006000000000000003,
+      "max_depth": -1,
+      "min_child_samples": 70,
+      "min_child_weight": 0.001,
+      "min_split_gain": 0.0002,
+      "n_estimators": 1100,
+      "n_jobs": -1,
+      "num_leaves": 240,
+      "objective": "multiclass",
+      "random_state": 42,
+      "reg_alpha": 2.0,
+      "reg_lambda": 0.02,
+      "subsample": 0.8,
+      "subsample_for_bin": 200000,
+      "subsample_freq": 0,
+      "device_type": "gpu",
+      "gpu_platform_id": 0,
+      "gpu_device_id": 0,
+      "bagging_freq": 1,
+      "extra_trees": true
+    },
+    "mlpv1": {
+      "name": "sequential_2",
+      "layers": [
+        {
+          "class_name": "InputLayer",
+          "config": {
+            "batch_input_shape": [
+              null,
+              55
+            ],
+            "dtype": "float32",
+            "sparse": false,
+            "ragged": false,
+            "name": "dense_8_input"
+          }
+        },
+        {
+          "class_name": "Dense",
+          "config": {
+            "name": "dense_8",
+            "trainable": true,
+            "batch_input_shape": [
+              null,
+              55
+            ],
+            "dtype": "float32",
+            "units": 512,
+            "activation": "linear",
+            "use_bias": true,
+            "kernel_initializer": {
+              "class_name": "GlorotUniform",
+              "config": {
+                "seed": null
+              }
+            },
+            "bias_initializer": {
+              "class_name": "Zeros",
+              "config": {}
+            },
+            "kernel_regularizer": {
+              "class_name": "L2",
+              "config": {
+                "l2": 0.0
+              }
+            },
+            "bias_regularizer": null,
+            "activity_regularizer": null,
+            "kernel_constraint": null,
+            "bias_constraint": null
+          }
+        },
+        {
+          "class_name": "BatchNormalization",
+          "config": {
+            "name": "batch_normalization_6",
+            "trainable": true,
+            "dtype": "float32",
+            "axis": [
+              1
+            ],
+            "momentum": 0.99,
+            "epsilon": 0.001,
+            "center": true,
+            "scale": true,
+            "beta_initializer": {
+              "class_name": "Zeros",
+              "config": {}
+            },
+            "gamma_initializer": {
+              "class_name": "Ones",
+              "config": {}
+            },
+            "moving_mean_initializer": {
+              "class_name": "Zeros",
+              "config": {}
+            },
+            "moving_variance_initializer": {
+              "class_name": "Ones",
+              "config": {}
+            },
+            "beta_regularizer": null,
+            "gamma_regularizer": null,
+            "beta_constraint": null,
+            "gamma_constraint": null
+          }
+        },
+        {
+          "class_name": "Activation",
+          "config": {
+            "name": "activation_6",
+            "trainable": true,
+            "dtype": "float32",
+            "activation": "relu"
+          }
+        },
+        {
+          "class_name": "Dropout",
+          "config": {
+            "name": "dropout_6",
+            "trainable": true,
+            "dtype": "float32",
+            "rate": 0.2,
+            "noise_shape": null,
+            "seed": null
+          }
+        },
+        {
+          "class_name": "Dense",
+          "config": {
+            "name": "dense_9",
+            "trainable": true,
+            "dtype": "float32",
+            "units": 512,
+            "activation": "linear",
+            "use_bias": true,
+            "kernel_initializer": {
+              "class_name": "GlorotUniform",
+              "config": {
+                "seed": null
+              }
+            },
+            "bias_initializer": {
+              "class_name": "Zeros",
+              "config": {}
+            },
+            "kernel_regularizer": {
+              "class_name": "L2",
+              "config": {
+                "l2": 0.0
+              }
+            },
+            "bias_regularizer": null,
+            "activity_regularizer": null,
+            "kernel_constraint": null,
+            "bias_constraint": null
+          }
+        },
+        {
+          "class_name": "BatchNormalization",
+          "config": {
+            "name": "batch_normalization_7",
+            "trainable": true,
+            "dtype": "float32",
+            "axis": [
+              1
+            ],
+            "momentum": 0.99,
+            "epsilon": 0.001,
+            "center": true,
+            "scale": true,
+            "beta_initializer": {
+              "class_name": "Zeros",
+              "config": {}
+            },
+            "gamma_initializer": {
+              "class_name": "Ones",
+              "config": {}
+            },
+            "moving_mean_initializer": {
+              "class_name": "Zeros",
+              "config": {}
+            },
+            "moving_variance_initializer": {
+              "class_name": "Ones",
+              "config": {}
+            },
+            "beta_regularizer": null,
+            "gamma_regularizer": null,
+            "beta_constraint": null,
+            "gamma_constraint": null
+          }
+        },
+        {
+          "class_name": "Activation",
+          "config": {
+            "name": "activation_7",
+            "trainable": true,
+            "dtype": "float32",
+            "activation": "relu"
+          }
+        },
+        {
+          "class_name": "Dropout",
+          "config": {
+            "name": "dropout_7",
+            "trainable": true,
+            "dtype": "float32",
+            "rate": 0.2,
+            "noise_shape": null,
+            "seed": null
+          }
+        },
+        {
+          "class_name": "Dense",
+          "config": {
+            "name": "dense_10",
+            "trainable": true,
+            "dtype": "float32",
+            "units": 192,
+            "activation": "linear",
+            "use_bias": true,
+            "kernel_initializer": {
+              "class_name": "GlorotUniform",
+              "config": {
+                "seed": null
+              }
+            },
+            "bias_initializer": {
+              "class_name": "Zeros",
+              "config": {}
+            },
+            "kernel_regularizer": {
+              "class_name": "L2",
+              "config": {
+                "l2": 0.0
+              }
+            },
+            "bias_regularizer": null,
+            "activity_regularizer": null,
+            "kernel_constraint": null,
+            "bias_constraint": null
+          }
+        },
+        {
+          "class_name": "BatchNormalization",
+          "config": {
+            "name": "batch_normalization_8",
+            "trainable": true,
+            "dtype": "float32",
+            "axis": [
+              1
+            ],
+            "momentum": 0.99,
+            "epsilon": 0.001,
+            "center": true,
+            "scale": true,
+            "beta_initializer": {
+              "class_name": "Zeros",
+              "config": {}
+            },
+            "gamma_initializer": {
+              "class_name": "Ones",
+              "config": {}
+            },
+            "moving_mean_initializer": {
+              "class_name": "Zeros",
+              "config": {}
+            },
+            "moving_variance_initializer": {
+              "class_name": "Ones",
+              "config": {}
+            },
+            "beta_regularizer": null,
+            "gamma_regularizer": null,
+            "beta_constraint": null,
+            "gamma_constraint": null
+          }
+        },
+        {
+          "class_name": "Activation",
+          "config": {
+            "name": "activation_8",
+            "trainable": true,
+            "dtype": "float32",
+            "activation": "relu"
+          }
+        },
+        {
+          "class_name": "Dropout",
+          "config": {
+            "name": "dropout_8",
+            "trainable": true,
+            "dtype": "float32",
+            "rate": 0.2,
+            "noise_shape": null,
+            "seed": null
+          }
+        },
+        {
+          "class_name": "Dense",
+          "config": {
+            "name": "dense_11",
+            "trainable": true,
+            "dtype": "float32",
+            "units": 3,
+            "activation": "linear",
+            "use_bias": true,
+            "kernel_initializer": {
+              "class_name": "GlorotUniform",
+              "config": {
+                "seed": null
+              }
+            },
+            "bias_initializer": {
+              "class_name": "Constant",
+              "config": {
+                "value": [
+                  -0.8905675723823604,
+                  -1.8380037650812198,
+                  -0.8429415799982286
+                ]
+              }
+            },
+            "kernel_regularizer": null,
+            "bias_regularizer": null,
+            "activity_regularizer": null,
+            "kernel_constraint": null,
+            "bias_constraint": null
+          }
+        }
+      ]
+    }
+  },
+  "calibration": {
+    "clf_oosF2": {
+      "type": "RollingVectorScaledSoftmaxLGBM",
+      "reg": 0.001,
+      "splits": 3,
+      "embargo": 5
+    },
+    "mlp_v1_oosF2": {
+      "type": "RollingVectorScaledSoftmax",
+      "reg": 0.001,
+      "splits": 3,
+      "embargo": 5
+    },
+    "blender_F3": {
+      "type": "ClasswiseConvexBlender",
+      "reg": 0.01
+    },
+    "clf_F3": {
+      "type": "VectorScaledSoftmaxLGBM",
+      "reg": 0.001
+    },
+    "mlp_v1_F3": {
+      "type": "VectorScaledSoftmax",
+      "reg": 0.001
+    }
+  }
+}
