@@ -1,0 +1,150 @@
+{
+  "BOTTOM_QUANTILE": 0.1,
+  "CLF_CAL_PATH": "models\\clf_cal.pkl",
+  "CLF_DIR": "models\\clf",
+  "CLF_PATH": "models\\clf\\clf.pkl",
+  "CV_GAP": 63,
+  "CV_N_SPLITS": 3,
+  "DATA_DIR": "data",
+  "DATA_END_DATE": "2025-01-01",
+  "DATA_START_DATE": "2010-01-01",
+  "DGS10": "data\\DGS10.csv",
+  "FIGURES_DIR": "figures",
+  "FILTERED_HIGH": "data\\S&P500_PIT_high.parquet",
+  "FILTERED_LOW": "data\\S&P500_PIT_low.parquet",
+  "FILTERED_PRICES": "data\\S&P500_PIT.parquet",
+  "FILTERED_VOLUMES": "data\\S&P500_PIT_volumes.parquet",
+  "FOLD1_END": "2016-12-31",
+  "FOLD1_START": "2010-01-01",
+  "FOLD2_END": "2019-12-31",
+  "FOLD2_START": "2017-01-01",
+  "FOLD3_END": "2024-12-31",
+  "FOLD3_START": "2020-01-01",
+  "HYPERPARAM_BAYESIAN": {
+    "n_estimators": "Integer(low=1100, high=1500, prior='uniform', transform='identity')",
+    "learning_rate": "Real(low=0.006, high=0.01, prior='log-uniform', transform='identity')",
+    "num_leaves": "Integer(low=200, high=240, prior='uniform', transform='identity')",
+    "min_child_samples": "Integer(low=50, high=70, prior='uniform', transform='identity')",
+    "min_split_gain": "Real(low=3e-05, high=0.0002, prior='log-uniform', transform='identity')",
+    "subsample": "Real(low=0.6, high=0.8, prior='uniform', transform='identity')",
+    "colsample_bytree": "Real(low=0.58, high=0.76, prior='uniform', transform='identity')",
+    "bagging_freq": "Integer(low=1, high=2, prior='uniform', transform='identity')",
+    "extra_trees": "Categorical(categories=(True,), prior=None)",
+    "reg_alpha": "Real(low=0.5, high=2.0, prior='log-uniform', transform='identity')",
+    "reg_lambda": "Real(low=0.002, high=0.02, prior='log-uniform', transform='identity')"
+  },
+  "HYPERPARAM_RANDOM": {
+    "n_estimators": "<scipy.stats._distn_infrastructure.rv_discrete_frozen object at 0x00000242FEFBEFB0>",
+    "learning_rate": "<scipy.stats._distn_infrastructure.rv_continuous_frozen object at 0x00000242B86D2B00>",
+    "num_leaves": "<scipy.stats._distn_infrastructure.rv_discrete_frozen object at 0x00000242B8E35F00>",
+    "max_depth": "<scipy.stats._distn_infrastructure.rv_discrete_frozen object at 0x00000242B8E36200>",
+    "min_child_samples": "<scipy.stats._distn_infrastructure.rv_discrete_frozen object at 0x00000242B8E36080>",
+    "subsample": "<scipy.stats._distn_infrastructure.rv_continuous_frozen object at 0x00000242B8E36710>",
+    "colsample_bytree": "<scipy.stats._distn_infrastructure.rv_continuous_frozen object at 0x00000242B8E35750>",
+    "reg_alpha": "<scipy.stats._distn_infrastructure.rv_continuous_frozen object at 0x00000242B8E375E0>",
+    "reg_lambda": "<scipy.stats._distn_infrastructure.rv_continuous_frozen object at 0x00000242B8E37880>",
+    "min_split_gain": "<scipy.stats._distn_infrastructure.rv_continuous_frozen object at 0x00000242B8E366E0>",
+    "bagging_freq": "<scipy.stats._distn_infrastructure.rv_discrete_frozen object at 0x00000242B8E37DC0>"
+  },
+  "LABEL_MAP": {
+    "-1": 0,
+    "0": 1,
+    "1": 2
+  },
+  "LAMBDA_BLEND": 0.2,
+  "LEVERAGE_CAP": 3,
+  "LONG_ONLY": false,
+  "LONG_SIDE_TC": 0.001,
+  "MASTER_PARQUET": "data\\master.parquet",
+  "MAX_HOLDING_PERIOD": 63,
+  "META_PROBA_THRESHOLD_LONG": 0.45,
+  "META_PROBA_THRESHOLD_SHORT": 0.5,
+  "META_SCORE_MODE": "edge",
+  "MIN_GAP": 0.1,
+  "MIN_TRADE_EPS": 0.01,
+  "MISSING_DATA_REPORT": "data\\missing_count.xlsx",
+  "MLPV1T": "models\\mlpv1t.keras",
+  "MLPV1_DIR": "models\\mlpv1",
+  "MLPV_HP_SPACE": {
+    "units1": [
+      384,
+      512,
+      640,
+      768
+    ],
+    "units2": [
+      256,
+      384,
+      512
+    ],
+    "units3": [
+      96,
+      128,
+      192,
+      256
+    ],
+    "n_hidden": {
+      "min_value": 2,
+      "max_value": 3,
+      "step": 1
+    },
+    "dropout": {
+      "min_value": 0.1,
+      "max_value": 0.3,
+      "step": 0.05
+    },
+    "l2_reg": [
+      0.0,
+      1e-07,
+      1e-06,
+      1e-05
+    ],
+    "activation": [
+      "relu"
+    ],
+    "learning_rate": {
+      "min_value": 0.0003,
+      "max_value": 0.003,
+      "sampling": "log"
+    },
+    "epochs": 100,
+    "batch_size": 2048,
+    "max_trials": 30,
+    "batch_norm": true,
+    "label_smoothing": 0.0
+  },
+  "MODELS_DIR": "models",
+  "NN_TRAINING_PARAMS": {
+    "early_stopping_patience": 16,
+    "early_stopping_min_delta": 0.0002,
+    "reduce_lr_patience": 4,
+    "reduce_lr_factor": 0.5,
+    "reduce_lr_min_lr": 1e-06
+  },
+  "N_JOBS": -1,
+  "PERFORMANCE_SUMMARY_XLSX": "results\\performance_summary.xlsx",
+  "PROB_WEIGHTING": true,
+  "PT_SL_FACTOR": [
+    5,
+    5
+  ],
+  "RANDOM_SEARCH_ITER": 15,
+  "RANDOM_STATE": 42,
+  "RESULTS_DIR": "results",
+  "ROOT_DIR": ".",
+  "RUNS_DIR": "runs",
+  "SHAP_VALUES_DIR": "shap",
+  "SHORT_SIDE_TC": 0.002,
+  "SNP500_HISTORY_CSV": "data\\S&P 500 Historical Components & Changes(03-10-2025).csv",
+  "SPY": "data\\SPY.parquet",
+  "T10Y3M": "data\\T10Y3M.csv",
+  "TARGET_VOL": 0.2,
+  "TICKER_AVAILABILITY_REPORT": "data\\ticker_availability.xlsx",
+  "TOP_K_PER_DAY": 3,
+  "TOP_QUANTILE": 0.9,
+  "VIX": "data\\VIX.parquet",
+  "VOL_SPAN": 63,
+  "WEIGHT_MODE": "margin",
+  "X": "data\\X.parquet",
+  "Y": "data\\Y.parquet"
+}

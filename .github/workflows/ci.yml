@@ -27,9 +27,3 @@ jobs:
           ruff check src
           black --check src
           isort --check-only src
-
-      - name: Type-check (soft-fail)
-        run: |
-          mypy --config-file mypy.ini \
-              src/signals.py src/sizing.py src/labeling.py src/utils.py src/strategy.py
-        continue-on-error: true

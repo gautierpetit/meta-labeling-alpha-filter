@@ -79,8 +79,9 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 tf.get_logger().setLevel("ERROR")
-lightgb_logger = logging.getLogger("LightGBM")
+lightgb_logger = logging.getLogger("lightgbm")
 lightgb_logger.setLevel(logging.ERROR)
+lightgb_logger.propagate = False
 
 
 def main() -> None:
@@ -393,10 +394,7 @@ def main() -> None:
     logger.info("=== Performance Summary === \n%s", summary[summary.columns[0]])
 
     if args.mirror_latest:
-        mirror_tree(config.FIGURES_DIR, config.ROOT_DIR / "figures")
-        mirror_tree(config.RESULTS_DIR, config.ROOT_DIR / "results")
-        mirror_tree(config.SHAP_VALUES_DIR, config.ROOT_DIR / "shap")
-        mirror_tree(config.MODELS_DIR, config.ROOT_DIR / "models")
+        mirror_tree(run_dir, config.ROOT_DIR)
 
 
 if __name__ == "__main__":
