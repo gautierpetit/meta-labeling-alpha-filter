@@ -27,10 +27,8 @@ from keras.models import Sequential
 from keras.optimizers import Adam
 from keras.regularizers import l2
 from keras_tuner import Objective
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.preprocessing import StandardScaler
 
 import src.config as config
 from src.analysis import plot_learning_curve, save_history
@@ -195,7 +193,7 @@ def build_model(
         Sequential: Compiled Keras model.
     """
 
-    hp_space = config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
+    hp_space = config.MLPV1_HP_SPACE
 
     n_hidden = hp.Int("n_hidden", **hp_space["n_hidden"])
     dropout_rate = hp.Float("dropout", **hp_space["dropout"])
@@ -248,7 +246,7 @@ def train_MLP(
     returns the trained model together with the fitted scaler.
     """
     y_int = Y.map(config.LABEL_MAP).values
-    hp_space = config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
+    hp_space = config.MLPV1_HP_SPACE
 
     X_scaled, final_scaler = scale_features(X, return_scaler=True)
 
@@ -308,7 +306,7 @@ def mlp_nested_cv(
     outer_cv = TimeSeriesSplit(n_splits=config.CV_N_SPLITS, gap=config.CV_GAP)
     acc_scores, auc_scores, ll_scores, hparams_all = [], [], [], []
 
-    hp_space = config.MLPV1_HP_SPACE if project_name == "mlpv1t" else config.MLPV2_HP_SPACE
+    hp_space = config.MLPV1_HP_SPACE
 
     for fold, (train_idx, val_idx) in enumerate(outer_cv.split(X), 1):
         logger.info("\nOuter Fold %d/%d", fold, config.CV_N_SPLITS)
@@ -557,7 +555,6 @@ class VectorScaledSoftmax:
         y_val_int must be integer-coded according to label_map values (0..K-1).
         """
         if hasattr(model, "predict_logits"):
-            # e.g. MetaLogit: it handles its own scaling/columns
             logits = model.predict_logits(X_val)  # (n, K)
         else:
             if scaler is None:
@@ -768,116 +765,6 @@ class RollingVectorScaledSoftmax:
         proba = self.predict_proba(X)
         idx = np.argmax(proba, axis=1)
         return np.array([self.class_labels_[i] for i in idx])
-
-
-class ConvexProbabilityBlender:
-    """
-    Learns a single weight w in [0,1] to blend calibrated proba from
-    the two base models present in X_meta columns:
-      p_blend = w * p_mlp + (1-w) * p_clf
-    Expects columns: proba_clf_-1, proba_clf_0, proba_clf_1,
-                     proba_mlp_-1, proba_mlp_0, proba_mlp_1
-    """
-
-    def __init__(self, label_map, w=0.5):
-        self.class_labels_ = sorted(label_map.keys(), key=lambda k: label_map[k])
-        self.class_to_index = label_map
-        self.w = float(w)
-
-    @staticmethod
-    def _nll(y_true_int, proba, eps=1e-12):
-        p = np.clip(proba, eps, 1 - eps)
-        p /= p.sum(axis=1, keepdims=True)
-        return -np.mean(np.log(p[np.arange(len(y_true_int)), y_true_int]))
-
-    @classmethod
-    def from_fold2(cls, label_map, X_meta_f2, y_fold2_int):
-        # grid-search w in [0,1]
-        grid = np.linspace(0.0, 1.0, 21)
-        proba_clf = X_meta_f2[["proba_clf_-1", "proba_clf_0", "proba_clf_1"]].values
-        proba_mlp = X_meta_f2[["proba_mlp_-1", "proba_mlp_0", "proba_mlp_1"]].values
-
-        best_w, best_nll = 0.5, np.inf
-        for w in grid:
-            p = w * proba_mlp + (1.0 - w) * proba_clf
-            nll = cls._nll(y_fold2_int, p)
-            if nll < best_nll:
-                best_nll, best_w = nll, w
-        return cls(label_map, w=best_w)
-
-    # keep interface similar to your other "model" wrappers
-    def predict_proba(self, X_meta: pd.DataFrame) -> np.ndarray:
-        proba_clf = X_meta[["proba_clf_-1", "proba_clf_0", "proba_clf_1"]].values
-        proba_mlp = X_meta[["proba_mlp_-1", "proba_mlp_0", "proba_mlp_1"]].values
-        p = self.w * proba_mlp + (1.0 - self.w) * proba_clf
-        # normalize just in case
-        p = np.clip(p, 1e-12, 1.0)
-        p /= p.sum(axis=1, keepdims=True)
-        return p
-
-    def predict(self, X_meta: pd.DataFrame) -> np.ndarray:
-        p = self.predict_proba(X_meta)
-        idx = np.argmax(p, axis=1)
-        return np.array([self.class_labels_[i] for i in idx])
-
-
-class MetaLogit:
-    """Multinomial logistic regression meta-learner on X_meta."""
-
-    def __init__(self, label_map, C=1.0):
-        self.class_labels_ = sorted(label_map.keys(), key=lambda k: label_map[k])
-        self.class_to_index = label_map
-        self.scaler = StandardScaler()
-        self.model = LogisticRegression(
-            multi_class="multinomial",
-            solver="lbfgs",
-            C=C,
-            class_weight="balanced",
-            max_iter=1000,
-            n_jobs=-1,
-        )
-        self.selected_cols = None
-
-    def fit(self, X_meta: pd.DataFrame, y):
-        # Select robust columns
-        cols = [
-            "proba_clf_-1",
-            "proba_clf_0",
-            "proba_clf_1",
-            "proba_mlp_-1",
-            "proba_mlp_0",
-            "proba_mlp_1",
-            "proba_gap_clf",
-            "proba_gap_mlp",
-            "confidence_mean",
-            "confidence_agreement",
-            "model_agreement",
-            "logodds_clf",
-            "logodds_mlp",
-            "margin_clf",
-            "margin_mlp",
-        ]
-        self.selected_cols = [c for c in cols if c in X_meta.columns]
-        Xs = self.scaler.fit_transform(X_meta[self.selected_cols].values)
-        y_int = pd.Series(y).map(self.class_to_index).values
-        self.model.fit(Xs, y_int)
-        return self
-
-    def predict_proba(self, X_meta: pd.DataFrame) -> np.ndarray:
-        Xs = self.scaler.transform(X_meta[self.selected_cols].values)
-        proba = self.model.predict_proba(Xs)
-        # scikit uses class order [0,1,2] already
-        return proba
-
-    def predict(self, X_meta: pd.DataFrame) -> np.ndarray:
-        idx = self.model.predict(self.scaler.transform(X_meta[self.selected_cols].values))
-        return np.array([self.class_labels_[i] for i in idx])
-
-    def predict_logits(self, X_meta: pd.DataFrame) -> np.ndarray:
-        # use the same selected_cols you fit on
-        Xs = self.scaler.transform(X_meta[self.selected_cols].values)
-        # multinomial LR returns class-wise linear scores (pre-softmax)
-        return self.model.decision_function(Xs)  # shape (n_samples, K)
 
 
 class ClasswiseConvexBlender:

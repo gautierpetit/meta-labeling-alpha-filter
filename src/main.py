@@ -41,14 +41,11 @@ from src.data_loader import (
     load_spy_returns,
 )
 from src.evaluation import backtest_strategy
-from src.features import build_meta_features, build_meta_features_lean
 from src.features import main as build_and_save_features
 from src.labeling import scan_holding_period_range, scan_tp_sl_grid
 from src.mlp_modeling import (
     Bundle,
     ClasswiseConvexBlender,
-    ConvexProbabilityBlender,
-    MetaLogit,
     RollingVectorScaledSoftmax,
     VectorScaledSoftmax,
     _safe_transform,
@@ -113,9 +110,7 @@ def main() -> None:
 
     # keep sub-model dirs coherent under this run
     config.MLPV1_DIR = config.MODELS_DIR / "mlpv1"
-    config.MLPV2_DIR = config.MODELS_DIR / "mlpv2"
     config.MLPV1_DIR.mkdir(parents=True, exist_ok=True)
-    config.MLPV2_DIR.mkdir(parents=True, exist_ok=True)
     config.CLF_DIR = config.MODELS_DIR / "clf"
     config.CLF_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -256,137 +251,7 @@ def main() -> None:
         patience=20,
     )
 
-    logger.info("=== 7. Generate Meta-features ===")
-
-    daily_signals = daily_signals_lo if config.LONG_ONLY else daily_signals_ls
-    # Fold-2 (meta-train): fully OOS-calibrated features
-    X_meta_f2 = build_meta_features(X_fold2, clf_oosF2, mlp_v1_oosF2)
-    meta_cols = X_meta_f2.columns.tolist()
-
-    # Fold-3 (meta-test): calibrated on Fold-2
-    X_meta_f3 = build_meta_features(X_fold3, clf_F3, mlp_v1_F3)
-
-    X_meta_f2_lean = build_meta_features_lean(X_fold2, clf_oosF2, mlp_v1_oosF2)
-    X_meta_f3_lean = build_meta_features_lean(X_fold3, clf_F3, mlp_v1_F3)
-
-    logger.info("=== 8. Meta Model Training ===")
-
-    (
-        mlp_v2t,
-        scaler_meta,
-        best_fold_hp_v2t,
-        acc_mlp_v2t,
-        auc_mlp_v2t,
-        ll_mlp_v2t,
-        hparams_v2t,
-    ) = mlp_nested_cv(X_meta_f2, Y_fold2, "Bayesian", "mlpv2t")
-
-    meta_cols = X_meta_f2.columns.tolist()
-    X_meta_f3 = X_meta_f3.reindex(columns=meta_cols)
-    assert list(X_meta_f3.columns) == meta_cols
-    assert list(scaler_meta.feature_names_in_) == meta_cols
-
-    # Save model:
-    Bundle(mlp_v2t, scaler_meta, BUNDLE_CLASS_LABELS).save(config.MLPV2_DIR)
-
-    # Load model:
-    bundle_v2 = Bundle.load(config.MLPV2_DIR, compile=False)
-    mlp_v2t, scaler_meta = bundle_v2.model, bundle_v2.scaler
-
-    logger.info("=== EXPERIMENTAL STACKER TESTS ===")
-
-    ##### MLPV2 on full features #####
-    mlp_v2_F3 = VectorScaledSoftmax.from_validation(
-        mlp_v2t,  # trained on Fold-2
-        config.LABEL_MAP,
-        scaler_meta,
-        X_meta_f2,  # calibrate on Fold-2 features
-        y_fold2_int,  # Fold-2 labels ONLY
-        reg=2e-2,
-        lr=0.05,
-        max_iter=1000,
-        tol=1e-7,
-        patience=20,
-    )
-
-    X_meta_f2_scaled = _safe_transform(scaler_meta, X_meta_f2)
-    X_meta_f3_scaled = _safe_transform(scaler_meta, X_meta_f3)
-
-    shap_values_v2 = shap_explain(
-        model=mlp_v2t, X_test=X_meta_f3_scaled, X_train=X_meta_f2_scaled, name="MLPV2T_FULL"
-    )
-    feature_importance(
-        model=mlp_v2t, shap_values=shap_values_v2, X_test=X_meta_f3_scaled, name="MLPV2_FULL"
-    )
-    evaluate_model(mlp_v2_F3, X_meta_f3, Y_fold3, "MLPV2_FULL")
-
-    ##### MLPV2 on lean features #####
-    (
-        mlp_v2t_lean,
-        scaler_meta_lean,
-        best_fold_hp_v2t_lean,
-        _,
-        _,
-        _,
-        _,
-    ) = mlp_nested_cv(X_meta_f2_lean, Y_fold2, "Bayesian", "mlpv2t")
-
-    mlp_v2_F3_lean = VectorScaledSoftmax.from_validation(
-        mlp_v2t_lean,
-        config.LABEL_MAP,
-        scaler_meta_lean,
-        X_meta_f2_lean,
-        y_fold2_int,
-        reg=2e-2,
-        lr=0.05,
-        max_iter=1000,
-        tol=1e-7,
-        patience=20,
-    )
-
-    X_meta_f2_scaled_lean = _safe_transform(scaler_meta_lean, X_meta_f2_lean)
-    X_meta_f3_scaled_lean = _safe_transform(scaler_meta_lean, X_meta_f3_lean)
-
-    shap_values_v2_lean = shap_explain(
-        model=mlp_v2t_lean,
-        X_test=X_meta_f3_scaled_lean,
-        X_train=X_meta_f2_scaled_lean,
-        name="MLPV2T_LEAN",
-    )
-    feature_importance(
-        model=mlp_v2t_lean,
-        shap_values=shap_values_v2_lean,
-        X_test=X_meta_f3_scaled_lean,
-        name="MLPV2_LEAN",
-    )
-
-    evaluate_model(mlp_v2_F3_lean, X_meta_f3_lean, Y_fold3, "MLPV2_LEAN")
-
-    ##### Simple blender #####
-    blender = ConvexProbabilityBlender.from_fold2(config.LABEL_MAP, X_meta_f2_lean, y_fold2_int)
-    logger.info("Convex blender weight w=%.3f", blender.w)
-
-    evaluate_model(blender, X_meta_f3_lean, Y_fold3, "BLENDER_LEAN")
-
-    ##### Linear regression #####
-    meta_logit = MetaLogit(config.LABEL_MAP, C=0.5).fit(X_meta_f2_lean, Y_fold2)
-
-    meta_logit_cal = VectorScaledSoftmax.from_validation(
-        model=meta_logit,
-        label_map=config.LABEL_MAP,
-        scaler=None,  # <-- not needed now
-        X_val=X_meta_f2_lean,
-        y_val_int=y_fold2_int,
-        reg=1e-4,
-        lr=0.05,
-        max_iter=1000,
-        tol=1e-7,
-        patience=20,
-    )
-
-    evaluate_model(meta_logit_cal, X_meta_f3_lean, Y_fold3, "META_LOGIT_CAL")
-
-    ##### Class-wise blender #####
+    logger.info("=== 7. Blender fitting ===")
     blender_fitter = ClasswiseConvexBlender(clf_oosF2, mlp_v1_oosF2, config.LABEL_MAP)
     blender_fitter.fit(
         X_fold2, y_fold2_int, lr=0.05, reg=1e-2, max_iter=2000, patience=50, tol=1e-7
@@ -401,10 +266,6 @@ def main() -> None:
     )
     # Create an inference copy that uses the Fold-3 calibrators
     blender_F3 = blender_fitter.with_inference_models(clf_F3, mlp_v1_F3)
-
-    evaluate_model(blender_F3, X_fold3, Y_fold3, "BLENDER_CW")
-
-    ##### END OF EXPERIMENTAL STACKER TESTS #####
 
     # Class priors by fold (int labels)
     y1 = Y_fold1.map(config.LABEL_MAP).values
@@ -446,12 +307,12 @@ def main() -> None:
     )
     write_json(run_dir / "manifest.json", manifest)
 
-    logger.info("=== 9. Classifier Analysis ===")
+    logger.info("=== 8. Classifier Analysis ===")
     shap_explain(model=clf, X_test=X_fold2, name="CLF")
     feature_importance(model=clf, shap_values=None, X_test=X_fold2, name="CLF")
     evaluate_model(clf_F3, X_fold3, Y_fold3, "CLF")
 
-    logger.info("=== 10. MLP Analysis ===")
+    logger.info("=== 9. MLP Analysis ===")
     X_fold1_scaled = _safe_transform(scaler, X_fold1)
     X_fold2_scaled = _safe_transform(scaler, X_fold2)
 
@@ -463,10 +324,10 @@ def main() -> None:
     )
     evaluate_model(mlp_v1_F3, X_fold3, Y_fold3, "MLPV1")
 
-    logger.info("=== 11. Meta Stacker Analysis ===")
+    logger.info("=== 10. Meta Stacker Analysis ===")
     evaluate_model(blender_F3, X_fold3, Y_fold3, "BLENDER_CW")
 
-    logger.info("=== 12. Meta VS Base ===")
+    logger.info("=== 11. Meta VS Base ===")
 
     proba_clf_F3 = clf_F3.predict_proba(X_fold3)
     proba_mlp_F3 = mlp_v1_F3.predict_proba(X_fold3)
@@ -487,14 +348,15 @@ def main() -> None:
     append_ablation_row(ablation_csv, "MLPv1_cal", Y_fold3, proba_mlp_F3, config.LABEL_MAP)
     append_ablation_row(ablation_csv, "Meta_Blend", Y_fold3, proba_blender_F3, config.LABEL_MAP)
 
-    logger.info("=== 13. Meta-filtered signal generation ===")
+    logger.info("=== 12. Meta-filtered signal generation ===")
+    daily_signals = daily_signals_lo if config.LONG_ONLY else daily_signals_ls
     filtered_signals = filter_signals_with_meta_model(
         daily_signals=daily_signals.loc[config.FOLD3_START :],
         clf=blender_F3,
         X_test=X_fold3,
         min_gap=config.MIN_GAP,
     )
-    logger.info("=== 14. Probability Weighting / Vol Targeting ===")
+    logger.info("=== 13. Probability Weighting / Vol Targeting ===")
     (
         filtered_mom_returns,
         filtered_mom_returns_costs,
@@ -511,7 +373,7 @@ def main() -> None:
         leverage_cap=config.LEVERAGE_CAP,
     )
 
-    logger.info("=== 15. Backtest meta-filtered strategy ===")
+    logger.info("=== 14. Backtest meta-filtered strategy ===")
     summary = backtest_strategy(
         strategy_returns=filtered_mom_returns,
         strategy_returns_w_costs=filtered_mom_returns_costs,

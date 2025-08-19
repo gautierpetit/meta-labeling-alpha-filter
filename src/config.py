@@ -16,7 +16,6 @@ MODELS_DIR = ROOT_DIR / "models"
 RESULTS_DIR = ROOT_DIR / "results"
 SHAP_VALUES_DIR = ROOT_DIR / "shap"
 MLPV1_DIR = MODELS_DIR / "mlpv1"
-MLPV2_DIR = MODELS_DIR / "mlpv2"
 RUNS_DIR = ROOT_DIR / "runs"
 CLF_DIR = MODELS_DIR / "clf"
 
@@ -122,23 +121,6 @@ MLPV1_HP_SPACE = {
 }
 
 
-# === MLP V2 (meta/stacking) ===
-MLPV2_HP_SPACE = {
-    "units1": [128, 160],
-    "units2": [64, 96],
-    "units3": [32, 64],
-    "n_hidden": {"min_value": 1, "max_value": 2, "step": 1},
-    "dropout": {"min_value": 0.15, "max_value": 0.35, "step": 0.05},
-    "l2_reg": [1e-5, 3e-5, 1e-4, 3e-4],
-    "activation": ["relu"],
-    "learning_rate": {"min_value": 3e-4, "max_value": 2e-3, "sampling": "log"},
-    "epochs": 120,
-    "batch_size": 512,
-    "max_trials": 30,
-    "batch_norm": True,
-    "label_smoothing": 0.05,
-}
-
 NN_TRAINING_PARAMS = {
     "early_stopping_patience": 16,  # slightly tighter to save time
     "early_stopping_min_delta": 2e-4,
@@ -177,7 +159,6 @@ PERFORMANCE_SUMMARY_XLSX = RESULTS_DIR / "performance_summary.xlsx"
 CLF_PATH = CLF_DIR / "clf.pkl"
 CLF_CAL_PATH = MODELS_DIR / "clf_cal.pkl"
 MLPV1T = MODELS_DIR / "mlpv1t.keras"
-MLPV2T = MODELS_DIR / "mlpv2t.keras"
 
 
 # Side-aware thresholds (defaults keep old behavior)
