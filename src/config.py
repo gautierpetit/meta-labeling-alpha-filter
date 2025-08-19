@@ -71,17 +71,17 @@ LABEL_MAP = {-1: 0, 0: 1, 1: 2}
 
 # LightGBM — RandomizedSearchCV (fast, tight ranges)
 HYPERPARAM_RANDOM = {
-    "n_estimators": randint(200, 600),  # Reduce the range of trees
-    "learning_rate": loguniform(0.05, 0.2),  # Focus on higher learning rates for faster convergence
-    "num_leaves": randint(20, 100),  # Smaller trees for faster training
-    "max_depth": randint(3, 8),  # Limit tree depth to reduce complexity
-    "min_child_samples": randint(50, 120),  # Slightly higher minimum samples for stability
-    "subsample": uniform(0.7, 0.3),  # Narrow the range for row sampling
-    "colsample_bytree": uniform(0.7, 0.3),  # Narrow the range for feature sampling
-    "reg_alpha": loguniform(1e-4, 0.1),  # Focus on smaller regularization values
-    "reg_lambda": loguniform(1e-3, 1.0),  # Reduce the range for L2 regularization
-    "min_split_gain": loguniform(1e-6, 1e-3),  # Narrow the range for split gain
-    "bagging_freq": randint(0, 3),  # Reduce bagging frequency
+    "n_estimators": randint(200, 600),
+    "learning_rate": loguniform(0.05, 0.2),
+    "num_leaves": randint(20, 100),
+    "max_depth": randint(3, 8),
+    "min_child_samples": randint(50, 120),
+    "subsample": uniform(0.7, 0.3),
+    "colsample_bytree": uniform(0.7, 0.3),
+    "reg_alpha": loguniform(1e-4, 0.1),
+    "reg_lambda": loguniform(1e-3, 1.0),
+    "min_split_gain": loguniform(1e-6, 1e-3),
+    "bagging_freq": randint(0, 3),
 }
 # LightGBM — BayesSearchCV (more sample-efficient)
 # max_depth=-1, boosting_type="gbdt", objective="multiclass"

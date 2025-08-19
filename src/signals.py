@@ -93,7 +93,7 @@ def filter_signals_with_meta_model(
             row = filtered_signals.loc[dt]
             if row.abs().sum() == 0:
                 continue
-            cols = row.index[row != 0].tolist()
+            cols = row.index[row != 0]
             if len(cols) <= K:
                 continue
 

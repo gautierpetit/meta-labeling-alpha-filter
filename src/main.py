@@ -102,7 +102,7 @@ def main() -> None:
     logger = setup_json_logging(run_dir, run_id=run_id, git_sha=git_sha)
     logger.info("Pipeline started [RUN] %s", run_id)
     cfg = {k: getattr(config, k) for k in dir(config) if k.isupper() and not k.startswith("_")}
-    (run_dir / "config_snapshot.json").write_text(json.dumps(cfg, indent=2))
+    write_json(run_dir / "config_snapshot.json", cfg)
 
     # Redirect global output dirs to this run capsule (no function signatures change)
     config.FIGURES_DIR = fig_dir
@@ -313,10 +313,10 @@ def main() -> None:
     X_meta_f3_scaled = _safe_transform(scaler_meta, X_meta_f3)
 
     shap_values_v2 = shap_explain(
-        model=mlp_v2t, X_test=X_meta_f3_scaled, X_train=X_meta_f2_scaled, name="MLPV2T"
+        model=mlp_v2t, X_test=X_meta_f3_scaled, X_train=X_meta_f2_scaled, name="MLPV2T_FULL"
     )
     feature_importance(
-        model=mlp_v2t, shap_values=shap_values_v2, X_test=X_meta_f3_scaled, name="MLPV2"
+        model=mlp_v2t, shap_values=shap_values_v2, X_test=X_meta_f3_scaled, name="MLPV2_FULL"
     )
     evaluate_model(mlp_v2_F3, X_meta_f3, Y_fold3, "MLPV2_FULL")
 
@@ -347,11 +347,17 @@ def main() -> None:
     X_meta_f2_scaled_lean = _safe_transform(scaler_meta_lean, X_meta_f2_lean)
     X_meta_f3_scaled_lean = _safe_transform(scaler_meta_lean, X_meta_f3_lean)
 
-    shap_values_v2 = shap_explain(
-        model=mlp_v2t, X_test=X_meta_f3_scaled_lean, X_train=X_meta_f2_scaled_lean, name="MLPV2T"
+    shap_values_v2_lean = shap_explain(
+        model=mlp_v2t_lean,
+        X_test=X_meta_f3_scaled_lean,
+        X_train=X_meta_f2_scaled_lean,
+        name="MLPV2T_LEAN",
     )
     feature_importance(
-        model=mlp_v2t, shap_values=shap_values_v2, X_test=X_meta_f3_scaled_lean, name="MLPV2"
+        model=mlp_v2t_lean,
+        shap_values=shap_values_v2_lean,
+        X_test=X_meta_f3_scaled_lean,
+        name="MLPV2_LEAN",
     )
 
     evaluate_model(mlp_v2_F3_lean, X_meta_f3_lean, Y_fold3, "MLPV2_LEAN")
@@ -387,11 +393,11 @@ def main() -> None:
     )
 
     # Save the trained weights from Fold-2 fit
-    blender_fitter.save(run_dir / "models" / "BLENDER_CW")
+    blender_fitter.save(run_dir / "models" / "blender_cw")
 
     # Later / reload path
     blender_fitter = ClasswiseConvexBlender.load(
-        run_dir / "models" / "BLENDER_CW", clf_F3, mlp_v1_F3, config.LABEL_MAP
+        run_dir / "models" / "blender_cw", clf_F3, mlp_v1_F3, config.LABEL_MAP
     )
     # Create an inference copy that uses the Fold-3 calibrators
     blender_F3 = blender_fitter.with_inference_models(clf_F3, mlp_v1_F3)
@@ -414,7 +420,7 @@ def main() -> None:
             },
             "best_hparams": {
                 "clf": clf.get_params(),
-                "mlpv1": best_fold_hp_v1t.values,
+                "mlpv1": mlp_v1t.get_config(),
             },
             "calibration": {
                 "clf_oosF2": {

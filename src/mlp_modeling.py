@@ -598,7 +598,7 @@ class VectorScaledSoftmax:
                 # small L2 on (a-1, b) to prevent extreme values
                 loss += reg * (tf.reduce_sum((a - 1.0) ** 2) + tf.reduce_sum(b**2))
             grads = tape.gradient(loss, [a, b])
-            opt.apply_gradients(zip(grads, [a, b], strict=False))
+            opt.apply_gradients(list(zip(grads, [a, b])))  # noqa:B905
             return loss
 
         for _ in range(max_iter):

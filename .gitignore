@@ -45,6 +45,7 @@ dist/
 # Project-specific directories
 presentation/
 runs/*
+models/kt/*
 # Heavy data files built from features.py
 data/X.parquet
 data/Y.parquet

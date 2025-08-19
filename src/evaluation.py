@@ -594,11 +594,7 @@ def compute_pnl_per_trade(
         else:
             trade_returns = pd.Series(dtype=float)
 
-        idx = trade_returns.index
-        # find the first bar strictly after entry date within the (start, exit_date] window
-        start_pos = int(idx.searchsorted(date, side="right"))
-        stop_pos = int(idx.searchsorted(exit_date, side="right"))
-        pnl = float(trade_returns.iloc[start_pos:stop_pos].sum()) if start_pos < len(idx) else 0.0
+        pnl = float((trade_returns * weight).sum())
 
         pnl_list.append(pnl)
         trade_keys.append((date, asset))
