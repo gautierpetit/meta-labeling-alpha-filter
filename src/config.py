@@ -136,8 +136,8 @@ NN_TRAINING_PARAMS = {
 LONG_ONLY = False  # Requires retraining
 
 
-MIN_GAP = 0.1
-TOP_K_PER_DAY = 3
+MIN_GAP = 0.1  # -1 to turn off
+TOP_K_PER_DAY = 3  # -1 to turn off
 
 PROB_WEIGHTING = True  # Use model probabilities to weight signals
 WEIGHT_MODE = "margin"  # Options: "prob", "margin", "odds"

@@ -11,7 +11,7 @@ __pycache__/
 
 # Scratchpad and temporary files
 scratchpad.*
-*.pdf
+
 
 # Configuration files
 config_private.py

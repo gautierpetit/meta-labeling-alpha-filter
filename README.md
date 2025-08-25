@@ -1,125 +1,100 @@
 # Meta-Labeling Alpha Filter
 
-Enhancing cross-sectional momentum with stacked meta-models, probabilistic execution, and institutional-grade controls.
+**A Systematic Signal Refinement Framework**
 
-[Python 3.11] [Deterministic & Reproducible] [No Look-Ahead]
-
-A full end-to-end systematic trading framework that filters and sizes momentum signals using stacked LightGBM and deep neural networks to maximize risk-adjusted returns. Designed with hedge fund-grade rigor: point-in-time data integrity, nested cross-validation, Bayesian hyperparameter optimization, execution cost modeling, and explainability via SHAP.
+We turn a noisy momentum sleeve into a disciplined, probability-aware process. A calibrated meta-model predicts the chance each candidate trade will resolve within horizon; we gate and size by that probability and execute with realistic hygiene (close→next-close, asymmetric costs, EWMA vol target, leverage cap). The result is a diversifying sleeve that deploys cleanly as a 50/50 blend with SPY.
 ---
 
-## TL;DR (Out-of-Sample 2020-01-01 → 2024-12-31)
-- Sharpe (gross / net): [fill] / [fill]
-- Max Drawdown / Duration: [fill]% / [fill] days
-- Hit Rate (Long / Short): [fill]% / [fill]%
-- Executed trades: [fill] (post-filter)
-- Turnover (avg daily): [fill]
-- Costs: long = [fill] bps, short = [fill] bps; capacity ≤ [fill]% ADV per leg, weight cap = [fill]
+## TL;DR — Fold-3 Out-of-Sample (2020-01-01 → 2024-12-31) (net of costs)
+   - **Meta-Labeled Strategy (net):** 12.17% return @ 19.51% vol, Sharpe 0.62, β ≈ −0.11, ρ ≈ −0.12, max DD −28.07%.
+   - **50/50 SPY + Strategy (net):** 14.64% return @ 13.43% vol, Sharpe 1.09, max DD −28.07% (SPY −33.72%).
+   - **Beta-neutral (net):** 14.20% return @ 19.36% vol, Sharpe 0.73, β ≈ 0 (by design).
+   - **Trade quality:** 3,612 trades, 65.75% win rate, PF 2.92, avg holding 24.2d.
 
-What to notice: selective execution via meta-labeling improves risk-adjusted returns and cuts turnover vs. raw momentum; results hold across subperiods and parameter sweeps.
+Full tables/figures are in the [case report PDF](docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf) and under `results/` & `figures/`.
 
+[⬇️ Download the PDF](<docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf>?raw=1)
+---
+
+## What this repo contains
+
+   - **Case study PDF:** professional write-up with methods, diagnostics, and results (/docs/Meta-Labeling Alpha Filter - Case Report.pdf).
+   - **Reproducible pipeline:** point-in-time (PIT) universe, leakage-safe labeling, calibrated base models, classwise convex blender stacker, probability-aware execution, costs, and risk overlays.
+   - **Artifacts:** run manifest, config snapshot, and fold fingerprints saved per run for traceability.
 ---
 
 ## Pipeline at a glance
 
-1) Point-in-time data
-   - Historical S&P 500 membership and PIT prices; macro (rates, VIX), SPY benchmark.
+![Pipeline flowchart](docs/flowchart.png)
 
-2) Features
-   - Time-series: momentum (multi-horizon), realized vol, skew; TA (RSI, MACD, ATR, OBV, VWAP)
-   - Cross-sectional: ranks, z-scores, beta, crowding proxies
-   - Macro: yield curve slope, 10Y rates, VIX regimes
 
-3) Labels (Triple-Barrier)
-   - Volatility-scaled TP/SL, max holding period; grid scan and distribution checks
-
-4) Models
-   - LightGBM (random/Bayesian search) + calibrated probabilities
-   - MLP v1 (Bayesian tuner): dropout, L2, LR, batch size; early stopping; StandardScaler
-
-5) Meta-Features & Stacking
-   - Combine model probs, preds, probability gaps, agreement metrics + select macro features
-   - MLP v2 trained on meta-features for signal filtering
-
-6) Execution & Sizing
-   - Probability threshold + min_gap filter
-   - Probability-weighted sizing; NORMAL / INVERTED logic
-   - Vol targeting and leverage caps
-
-7) Backtest & Risk
-   - Strategy vs. benchmarks (SPY, vanilla momentum); turnover, costs, max DD, DD duration
-   - Calibration curves, confusion matrices, learning curves
-
-```
-Data  →  Features  →  Labels  →  Base Models (LGBM, MLPv1)  →  Meta-Features  →  MLPv2 Filter
-   \_________________________________________________________Stacking/Calibration________________/
-                                         ↓
-                                  Execution Layer
-                               (threshold, gap, sizing,
-                              vol targeting, leverage cap)
-                                         ↓
-                                 Backtest & Analytics
-```
+> **Branches.** `main` uses the classwise convex blender (production). [`experimental`](../../tree/experimental) contains an MLP stacker and other stacker exploration with  meta-features kept for reference; results in the report are from `main`.
 
 ---
 
-## Figures (generated) and selected results
-- Label grid and balance
-  - figures/heatmap_TP_SL_combined.png
-  - figures/label_distribution_before_after.png
-- Additional outputs
-  - figures/calibration_curves/
-  - figures/confusion_matrices/
-  - figures/learning_curves/
+## Key ideas
+   - **Filter first, trade second.** We predict resolution (TP before SL/timeout), not raw direction.
+   - **Calibration before control.** Decisions ride on calibrated class probabilities; thresholds, margins, and sizes are meaningful only if probabilities are reliable.
+   - **Stack on probabilities, not features.** A classwise convex blender combines LightGBM & MLPv1 after calibration—stable, leakage-safe, and monotone.
+   - **Execution hygiene.** Close→next-close PnL, asymmetric long/short costs on executed turnover, EWMA(63) vol targeting to a risk budget, and a hard gross cap.
 
-> Tip: add your best cumulative returns and drawdown plots here once generated.
+---
+
+## Quickstart
+
+1) Create env and install
+```
+# 1) Install
+python -m venv .venv && source .venv/bin/activate   # (Windows: .venv\Scripts\activate)
+pip install -r requirements.txt
+
+# 2) Put inputs in place (one-time)
+#   data/ should contain:
+#     - S&P 500 PIT constituents snapshot (CSV you downloaded at project start)
+#     - FRED series (DGS10, T10Y3M) as CSVs
+#   Then fetch OHLCV via:
+python -m src.data_download
+
+# 3) Run the full pipeline (Fold-1→3)
+python -m src.main
+
+# 4) Browse results
+open results/performance_summary.xlsx
+
+```
+
+Outputs:
+   - `results/performance_summary.xlsx` — headline table used in the report.
+   - `results/` strategy plots for each variant `strategy/`,`beta_neutral/`,`blend/`(names as generated):
+         - alpha_beta_regression.png, cumulative_returns.png, drawdown_underwater.png, rolling_corr.png, rolling_sharpe.png, daily_leverage.png, turnover.png
+         - additional `feature_importance/` and `classification_reports/`
+   - `shap/` — SHAP summaries/values for model explainability.
+   - `runs/<timestamp>/` — a full snapshot of that run (auto-generated plots, manifests, fingerprints, logs).
+   - `docs/` — the polished PDF: Meta-Labeling Alpha Filter — Case Review.pdf
+
+---
+
+## Configuration (edit `config.py`)
+
+- **Labeling:** `PT_SL_FACTOR=(5,5)`, `MAX_HOLDING_PERIOD=63`, `VOL_WINDOW=63`.
+`THRESHOLD_LONG=0.45`, `..._SHORT=0.50`, `MIN_GAP=0.10`, `TOP_K_PER_DAY=3`, `META_SCORE_MODE="edge"`.
+- **Sizing:** `PROB_WEIGHTING=True`, `WEIGHT_MODE="margin"`.
+- **Risk:** `TARGET_VOL=0.20`, `VOL_SPAN=63`, `LEVERAGE_CAP=3`.
+- **Costs:** `LONG_SIDE_TC=10` bps, `SHORT_SIDE_TC=20` bps (per-side, on executed turnover).
+
+> Defaults are conservative; thresholds, Top-K, and risk caps are easy to sweep.
 
 ---
 
 ## Reproducibility & leakage controls
-- PIT data and constituents; no survivorship/look-ahead bias
-- Walk-forward folds and train-only scaling/HP tuning
-- Global seeds; `TF_DETERMINISTIC_OPS=1`
-- Artifacts written to versioned folders: `results/`, `figures/`, `models/`, `shap/`
+- PIT S&P 500 membership and symbol normalization; SPY/VIX context series snapshotted.
+- Time-ordered folds: discovery (Fold-1), calibration + stacker (Fold-2), true OOS (Fold-3).
+- Leakage-safe calibration: vector-scaled softmax fit only on prior data; applied forward.
+- Determinism: global seeds; manifests and config snapshots written each run.
 
----
+Every run writes: manifest.json (env + code hash), config_snapshot.json (resolved parameters), fold_fingerprints.json (fold dates/hashes), and run.log.jsonl (timeline).
 
-## How to run (Windows / PowerShell)
-
-1) Create env and install
-```
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-2) Execute full pipeline
-```
-python main.py
-```
-
-Outputs:
-- results/: performance summaries, classification reports
-- figures/: plots (cumulative returns, drawdowns, turnover, SHAP)
-- models/: trained and calibrated models
-
----
-
-## Configuration knobs (edit `config.py`)
-- Data window: `DATA_START_DATE`, `DATA_END_DATE`
-- Execution logic: `LONG_ONLY`, `LOGIC in {"NORMAL","INVERTED"}`
-- Meta-filtering: `META_PROBA_THRESHOLD`, `MIN_GAP`
-- Sizing: `PROB_WEIGHTING`, `TARGET_VOL`, `LEVERAGE_CAP`, `VOL_SPAN`
-- Labeling: `PT_SL_FACTOR`, `MAX_HOLDING_PERIOD`
-- Search/Seeds/CPU: `RANDOM_STATE`, `N_JOBS`
-
-> Defaults are conservative; sweep thresholds and vol targets for robustness.
-
----
-
-## Robustness & sensitivity checks
-- Threshold and `min_gap` sweeps; vol target and leverage caps
-- NORMAL vs. INVERTED logic; long-only vs. long/short
-- Subperiods: 2017–2019, 2020, 2022, 2023–2024
+Data sources: S&P 500 PIT membership (Aultman, MIT-licensed snapshot), Yahoo Finance OHLCV (auto-adjusted), SPY/VIX context; FRED 10Y and 10Y–3M.
 
 ---
 
@@ -127,47 +102,54 @@ Outputs:
 
 ```
 meta-labeling-alpha-filter/
-├── config.py              # Global config & hyperparameter spaces
-├── data_loader.py         # PIT data & macro loaders
-├── features.py            # Feature generation & meta-features
-├── labeling.py            # Triple barrier labeling & scans
-├── modeling.py            # LightGBM training + calibration
-├── mlp_modeling.py        # MLP tuning/training (Keras, KerasTuner)
-├── signals.py             # Meta-model filtering of raw signals
-├── sizing.py              # Probability-weighted sizing, vol targeting
-├── strategy.py            # Momentum signal construction (daily)
-├── evaluation.py          # Backtests, drawdowns, turnover, costs
-├── analysis.py            # Learning curves, SHAP, reports
-├── main.py                # Orchestration (one-shot reproduce)
-├── notebook/              # Exploration notebooks
-├── figures/, models/, results/, shap/, data/
+├── data/                 # inputs: PIT constituents snapshot, FRED CSVs (DGS10, T10Y3M), yfinance caches
+├── docs/                 # the PDF case report + any static images you want to showcase publicly
+├── figures/              # optional showcase plots used by the README / report (non-generated)
+├── models/               # (optional) serialized models if you decide to save them
+├── results/              # GENERATED: backtest tables/plots and model diagnostics
+├── runs/                 # GENERATED: per-run folders (manifests, fingerprints, logs)
+├── shap/                 # GENERATED: SHAP summaries & values
+├── src/                  # code (orchestrator + modules)
+│   ├── main.py           # orchestrates the full pipeline end-to-end
+│   ├── config.py         # single source of truth for folds, costs, sizing knobs, thresholds
+│   ├── data_download.py  # PIT OHLCV (yfinance), SPY/VIX; writes parquet
+│   ├── data_loader.py    # leak-safe loaders; alignment & resampling
+│   ├── labeling.py       # triple-barrier labels
+│   ├── features.py       # point-in-time feature set (micro + regime)
+│   ├── modeling.py       # LightGBM w/ TS-CV + calibration
+│   ├── mlp_modeling.py   # MLPv1 w/ nested TS-CV + calibration
+│   ├── analysis.py       # model diagnostics (AUC/log-loss, reliability, SHAP hooks)
+│   ├── signals.py        # gating (threshold + gap), ranking (edge/logit_edge), Top-K
+│   ├── sizing.py         # prob→weights maps, λ-blend (hysteresis), vol-target, leverage cap, costs
+│   ├── evaluation.py     # PnL, alpha/beta, underwater, rolling Sharpe/corr; summary table
+│   ├── strategy.py       # base cross-sectional momentum logic
+│   └── utils.py / notifications.py
+├── config_snapshot.json  # latest run’s resolved config (handy to diff)
+├── fold_fingerprints.json# fold boundaries + hashes for reproducibility
+├── manifest.json         # environment + code hash snapshot
+├── run.log.jsonl         # per-run log with time stamps and key events
+
 ```
 
 ---
 
-## Possible expansions
+## Results overview
 
-#TODO:
+   - Performance table (Fold-3, net): Strategy, 50/50 blend, beta-neutral, SPY.
+   - Cumulative & underwater plots (strategy & 50/50).
+   - Alpha–beta fit & rolling correlation (portfolio fit to SPY).
+   - Calibration curves (blender + base models) and SHAP summaries (class +1).
+   - Turnover & leverage (appendix).
 
----
-
-
-## Tech stack
-- Python 3.11
-- Modeling: LightGBM, TensorFlow/Keras, Keras Tuner, scikit-learn
-- Explainability: SHAP, matplotlib, seaborn
-- Data: pandas, pyarrow, joblib
+> Note: blend/neutral variants show N/A for trade-level stats by design—they’re portfolio constructs, not direct trade streams, so counts/win rates don’t map 1:1 from the sleeve.
 
 ---
 
-## Contact
-Gautier Petit — Quant researcher (systematic trading, meta-labeling, ML-driven execution)
-- LinkedIn: https://linkedin.com/in/gautierpetitch
-- GitHub: https://github.com/gautierpetit
-
-Open to hedge fund roles in research and systematic portfolio management.
+## Why recruiters should care
+This is a deployable quant build: rigorous data hygiene, explicit out-of-sample protocol, calibration-first modeling, probability-aware execution, and realistic frictions. It demonstrates the ability to take a noisy baseline and ship a disciplined, auditable trading process that fits a broader portfolio (e.g., 50/50 with SPY).
 
 ---
 
-## License
-MIT — see LICENSE.
+## License & contact
+- License: MIT (see LICENSE).
+- Contact: Gautier Petit · github.com/gautierpetit · linkedin.com/in/gautierpetitch
