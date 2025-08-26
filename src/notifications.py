@@ -1,4 +1,7 @@
-"""Small helpers to send out run-time notifications (ntfy.sh).
+"""
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+Small helpers to send out run-time notifications (ntfy.sh).
 
 This module provides a thin wrapper around `requests.post` tuned for
 the ntfy.sh service. It's intentionally small and dependency-light so

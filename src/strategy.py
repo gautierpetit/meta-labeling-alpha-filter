@@ -1,4 +1,7 @@
-"""Signal generation and simple strategy helpers.
+"""
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+Signal generation and simple strategy helpers.
 
 This module exposes a small signal generator based on
 monthly momentum and a lightweight function to compute the daily

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 from pathlib import Path
 
 from scipy.stats import loguniform, randint, uniform

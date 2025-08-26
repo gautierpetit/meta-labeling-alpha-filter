@@ -1,4 +1,7 @@
-"""Evaluation and plotting helpers for backtests and diagnostics.
+"""
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+Evaluation and plotting helpers for backtests and diagnostics.
 
 This module contains utilities to compute drawdowns, rolling Sharpe,
 PnL per trade and to render commonly used diagnostic plots. Functions

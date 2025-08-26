@@ -1,4 +1,7 @@
-"""MLP modeling helpers: builders, training loops, and small model wrappers.
+"""
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+MLP modeling helpers: builders, training loops, and small model wrappers.
 
 This module contains utilities to build and tune feed-forward MLPs used as
 base and meta models in the project. It provides dataset helpers for

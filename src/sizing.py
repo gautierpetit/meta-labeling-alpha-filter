@@ -1,4 +1,7 @@
-"""Position sizing helpers.
+"""
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+Position sizing helpers.
 
 This module contains the position-sizing logic used by the backtests and
 live strategies. The main function `compute_probability_weighted_returns`
