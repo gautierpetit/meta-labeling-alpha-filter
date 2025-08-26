@@ -1,4 +1,7 @@
-"""Labeling utilities implementing the triple-barrier method and helper scans.
+"""
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+Labeling utilities implementing the triple-barrier method and helper scans.
 
 This module contains two implementations of the triple-barrier labeling
 algorithm (a straightforward looped version and a vectorized implementation),

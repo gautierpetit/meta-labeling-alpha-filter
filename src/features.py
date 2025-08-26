@@ -1,4 +1,7 @@
-"""Feature engineering utilities.
+"""
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+Feature engineering utilities.
 
 This module computes the project's cross-sectional and time-series features
 used by the meta-models. Functions are typed and documented so callers can

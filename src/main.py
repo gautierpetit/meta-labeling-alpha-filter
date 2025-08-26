@@ -1,4 +1,6 @@
 """
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 Main script for running the meta-labeling alpha filter pipeline.
 
 This script orchestrates the entire workflow, including data loading, feature engineering, model training, evaluation, and backtesting.

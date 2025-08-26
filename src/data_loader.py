@@ -1,4 +1,7 @@
-"""Convenience data loaders for project assets (prices, volumes, features, labels).
+"""
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+Convenience data loaders for project assets (prices, volumes, features, labels).
 
 These functions centralize file I/O and basic alignment logic so callers can
 assume consistent indices and dtypes. They favor explicit typing and simple

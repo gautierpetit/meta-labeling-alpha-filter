@@ -1,4 +1,7 @@
-"""Small project utilities: I/O, ids, and lightweight numeric helpers.
+"""
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+Small project utilities: I/O, ids, and lightweight numeric helpers.
 
 This module intentionally contains compact helper functions used across
 the repository: mapping classifier classes, building rolling-window

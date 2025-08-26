@@ -1,4 +1,7 @@
-"""Model helpers: feature scaling and LightGBM training utilities.
+"""
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+Model helpers: feature scaling and LightGBM training utilities.
 
 This module contains helpers used across the
 project for scaling features, splitting folds and training LightGBM

@@ -3,6 +3,7 @@
 **A Systematic Signal Refinement Framework**
 
 We turn a noisy momentum sleeve into a disciplined, probability-aware process. A calibrated meta-model predicts the chance each candidate trade will resolve within horizon; we gate and size by that probability and execute with realistic hygiene (close→next-close, asymmetric costs, EWMA vol target, leverage cap). The result is a diversifying sleeve that deploys cleanly as a 50/50 blend with SPY.
+
 ---
 
 ## TL;DR — Fold-3 Out-of-Sample (2020-01-01 → 2024-12-31) (net of costs)
@@ -14,6 +15,9 @@ We turn a noisy momentum sleeve into a disciplined, probability-aware process. A
 Full tables/figures are in the [case report PDF](docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf) and under `results/` & `figures/`.
 
 [⬇️ Download the PDF](<docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf>?raw=1)
+
+This is a deployable quant build: rigorous data hygiene, explicit out-of-sample protocol, calibration-first modeling, probability-aware execution, and realistic frictions. It demonstrates the ability to take a noisy baseline and ship a disciplined, auditable trading process that fits a broader portfolio (e.g., 50/50 with SPY).
+
 ---
 
 ## What this repo contains
@@ -42,7 +46,6 @@ Full tables/figures are in the [case report PDF](docs/Meta-Labeling%20Alpha%20Fi
 
 ## Quickstart
 
-1) Create env and install
 ```
 # 1) Install
 python -m venv .venv && source .venv/bin/activate   # (Windows: .venv\Scripts\activate)
@@ -71,6 +74,8 @@ Outputs:
    - `shap/` — SHAP summaries/values for model explainability.
    - `runs/<timestamp>/` — a full snapshot of that run (auto-generated plots, manifests, fingerprints, logs).
    - `docs/` — the polished PDF: Meta-Labeling Alpha Filter — Case Review.pdf
+
+> Note: blend/neutral variants show N/A for trade-level stats by design—they’re portfolio constructs, not direct trade streams, so counts/win rates don’t map 1:1 from the sleeve.
 
 ---
 
@@ -133,23 +138,11 @@ meta-labeling-alpha-filter/
 
 ---
 
-## Results overview
-
-   - Performance table (Fold-3, net): Strategy, 50/50 blend, beta-neutral, SPY.
-   - Cumulative & underwater plots (strategy & 50/50).
-   - Alpha–beta fit & rolling correlation (portfolio fit to SPY).
-   - Calibration curves (blender + base models) and SHAP summaries (class +1).
-   - Turnover & leverage (appendix).
-
-> Note: blend/neutral variants show N/A for trade-level stats by design—they’re portfolio constructs, not direct trade streams, so counts/win rates don’t map 1:1 from the sleeve.
-
----
-
-## Why recruiters should care
-This is a deployable quant build: rigorous data hygiene, explicit out-of-sample protocol, calibration-first modeling, probability-aware execution, and realistic frictions. It demonstrates the ability to take a noisy baseline and ship a disciplined, auditable trading process that fits a broader portfolio (e.g., 50/50 with SPY).
-
----
-
 ## License & contact
-- License: MIT (see LICENSE).
-- Contact: Gautier Petit · github.com/gautierpetit · linkedin.com/in/gautierpetitch
+- **Code:** PolyForm Noncommercial 1.0.0 — free for noncommercial use (evaluation, research, hiring).
+- **Report (PDF in /docs):** CC BY-NC-ND 4.0 — shareable with attribution, noncommercial, no derivatives.
+
+For commercial licensing inquiries, contact me via LinkedIn.
+
+## Contact
+Gautier Petit · [GitHub](github.com/gautierpetit) · [LinkedIn](linkedin.com/in/gautierpetitch)

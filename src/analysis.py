@@ -1,4 +1,7 @@
-"""Utilities for model analysis, plots and reports.
+"""
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+Utilities for model analysis, plots and reports.
 
 This module provides convenience functions to generate SHAP explanations,
 feature importance tables, evaluation metrics and diagnostic plots.
