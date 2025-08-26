@@ -14,7 +14,8 @@ We turn a noisy momentum sleeve into a disciplined, probability-aware process. A
 
 Full tables/figures are in the [case report PDF](docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf) and under `results/` & `figures/`.
 
-[⬇️ Download the PDF](<docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf>?raw=1)
+[⬇️ Download the PDF](https://github.com/gautierpetit/meta-labeling-alpha-filter/blob/main/docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf?raw=1)
+
 
 This is a deployable quant build: rigorous data hygiene, explicit out-of-sample protocol, calibration-first modeling, probability-aware execution, and realistic frictions. It demonstrates the ability to take a noisy baseline and ship a disciplined, auditable trading process that fits a broader portfolio (e.g., 50/50 with SPY).
 
@@ -29,7 +30,9 @@ This is a deployable quant build: rigorous data hygiene, explicit out-of-sample 
 
 ## Pipeline at a glance
 
-![Pipeline flowchart](docs/flowchart.png)
+<p align="center">
+  <img src="docs/flowchart.png" width="640" alt="Pipeline flowchart">
+</p>
 
 
 > **Branches.** `main` uses the classwise convex blender (production). [`experimental`](../../tree/experimental) contains an MLP stacker and other stacker exploration with  meta-features kept for reference; results in the report are from `main`.
@@ -108,9 +111,9 @@ Data sources: S&P 500 PIT membership (Aultman, MIT-licensed snapshot), Yahoo Fin
 ```
 meta-labeling-alpha-filter/
 ├── data/                 # inputs: PIT constituents snapshot, FRED CSVs (DGS10, T10Y3M), yfinance caches
-├── docs/                 # the PDF case report + any static images you want to showcase publicly
-├── figures/              # optional showcase plots used by the README / report (non-generated)
-├── models/               # (optional) serialized models if you decide to save them
+├── docs/                 # the PDF case report
+├── figures/              # GENERATED: models calibration curevs and diagnostics
+├── models/               # saved models
 ├── results/              # GENERATED: backtest tables/plots and model diagnostics
 ├── runs/                 # GENERATED: per-run folders (manifests, fingerprints, logs)
 ├── shap/                 # GENERATED: SHAP summaries & values
@@ -122,7 +125,7 @@ meta-labeling-alpha-filter/
 │   ├── labeling.py       # triple-barrier labels
 │   ├── features.py       # point-in-time feature set (micro + regime)
 │   ├── modeling.py       # LightGBM w/ TS-CV + calibration
-│   ├── mlp_modeling.py   # MLPv1 w/ nested TS-CV + calibration
+│   ├── mlp_modeling.py   # MLP w/ nested TS-CV + calibration
 │   ├── analysis.py       # model diagnostics (AUC/log-loss, reliability, SHAP hooks)
 │   ├── signals.py        # gating (threshold + gap), ranking (edge/logit_edge), Top-K
 │   ├── sizing.py         # prob→weights maps, λ-blend (hysteresis), vol-target, leverage cap, costs
