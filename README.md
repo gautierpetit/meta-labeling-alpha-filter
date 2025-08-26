@@ -31,7 +31,7 @@ This is a deployable quant build: rigorous data hygiene, explicit out-of-sample 
 ## Pipeline at a glance
 
 <p align="center">
-  <img src="docs/flowchart.png" width="640" alt="Pipeline flowchart">
+  <img src="docs/flowchart.png" width="400" alt="Pipeline flowchart">
 </p>
 
 
@@ -113,7 +113,7 @@ meta-labeling-alpha-filter/
 ├── data/                 # inputs: PIT constituents snapshot, FRED CSVs (DGS10, T10Y3M), yfinance caches
 ├── docs/                 # the PDF case report
 ├── figures/              # GENERATED: models calibration curevs and diagnostics
-├── models/               # saved models
+├── models/               # GENERATED: saved models
 ├── results/              # GENERATED: backtest tables/plots and model diagnostics
 ├── runs/                 # GENERATED: per-run folders (manifests, fingerprints, logs)
 ├── shap/                 # GENERATED: SHAP summaries & values
