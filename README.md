@@ -1,20 +1,28 @@
-# 🚧 Experimental Branch — Meta-Labeling Alpha Filter
+# Experimental Branch — Meta-Labeling Alpha Filter
 
-> This version is deprecated, it shows the experimentation of different stacker models and their evaluation
+This branch preserves research experiments that were not carried into the final `main` branch implementation.
 
-> **Status:** Experimental / research-only. Expect breaking changes, partial features, and limited support.
-> **Licensing:** Inherits **PolyForm Noncommercial 1.0.0** (code) and **CC BY-NC-ND 4.0** (docs) from `main`.
+It is kept for transparency and reference only. It contains exploratory stacker variants, intermediate ideas, and partially retained research artifacts that supported the final project design.
 
-## What’s different vs `main`
-- [Example] Alternative stacker: **MLP stacker** prototype on full features.
-- [Example] Alternative stacker: **MLP stacker** prototype on lean features.
-- [Example] Alternative stacker: **simple blender** prototype
-- [Example] Alternative stacker: **linear regression** prototype
-- [Example] Final stacker: **classwise blender**
-- [Example] Meta features build from base LightGBM and MLP predictions
+> **Status:** Experimental / research-only. This branch is not the canonical project version and may contain incomplete, superseded, or partially documented components.  
+> **Licensing:** The source code in this branch is licensed under the **BSD 3-Clause License**. Project documentation and the case report remain licensed separately under **CC BY-NC-ND 4.0**.
 
-## Documentation & Report
+## What differs from `main`
 
-- Full case report (PDF): see main branch → `docs/Meta-Labeling Alpha Filter — Case Report.pdf.`
+Compared with the final `main` branch, this branch includes experimentation with alternative meta-model designs, including:
 
-- Main README (project overview, pipeline, figures): https://github.com/gautierpetit/meta-labeling-alpha-filter/tree/main
+- MLP stacker prototype on the full feature set
+- MLP stacker prototype on a leaner feature set
+- simple blender prototype
+- linear regression prototype
+- classwise blender development iterations
+- meta-features constructed from base LightGBM and MLP predictions
+
+## Documentation
+
+- Full case report (PDF): see the [`main` branch report](https://github.com/gautierpetit/meta-labeling-alpha-filter/blob/main/docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf)
+- Main project overview and canonical implementation: see the [`main` branch README](https://github.com/gautierpetit/meta-labeling-alpha-filter/tree/main)
+
+## Note
+
+Readers looking for the final project should use the `main` branch. This branch is retained only to document the research path that led to the final stacker design.
