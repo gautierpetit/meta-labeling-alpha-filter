@@ -6,7 +6,7 @@ We turn a noisy momentum sleeve into a disciplined, probability-aware process. A
 
 ---
 
-## TL;DR — Fold-3 Out-of-Sample (2020-01-01 → 2024-12-31) (net of costs)
+## Fold-3 Out-of-Sample Summary (2020-01-01 to 2024-12-31, net of costs)
    - **Meta-Labeled Strategy (net):** 12.17% return @ 19.51% vol, Sharpe 0.62, β ≈ −0.11, ρ ≈ −0.12, max DD −28.07%.
    - **50/50 SPY + Strategy (net):** 14.64% return @ 13.43% vol, Sharpe 1.09, max DD −28.07% (SPY −33.72%).
    - **Beta-neutral (net):** 14.20% return @ 19.36% vol, Sharpe 0.73, β ≈ 0 (by design).
@@ -17,7 +17,7 @@ Full tables/figures are in the [case report PDF](docs/Meta-Labeling%20Alpha%20Fi
 [⬇️ Download the PDF](https://github.com/gautierpetit/meta-labeling-alpha-filter/blob/main/docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf?raw=1)
 
 
-This is a deployable quant build: rigorous data hygiene, explicit out-of-sample protocol, calibration-first modeling, probability-aware execution, and realistic frictions. It demonstrates the ability to take a noisy baseline and ship a disciplined, auditable trading process that fits a broader portfolio (e.g., 50/50 with SPY).
+This project emphasizes rigorous data hygiene, explicit out-of-sample evaluation, calibration-first modeling, probability-aware execution, and realistic portfolio frictions. It is intended as a research case study in systematic signal refinement rather than a claim of production-ready live performance.
 
 ---
 
@@ -35,7 +35,7 @@ This is a deployable quant build: rigorous data hygiene, explicit out-of-sample 
 </p>
 
 
-> **Branches.** `main` uses the classwise convex blender (production). [`experimental`](../../tree/experimental) contains an MLP stacker and other stacker exploration with  meta-features kept for reference; results in the report are from `main`.
+> **Branches.** `main` contains the classwise convex blender stacker used for the reported results. [`experimental`](../../tree/experimental) preserves MLP stacker variants and related meta-feature experiments for reference.
 
 ---
 
@@ -70,16 +70,13 @@ open results/performance_summary.xlsx
 ```
 
 Outputs:
-   - `results/performance_summary.xlsx` — headline table used in the report.
-   - `results/` strategy plots for each variant `strategy/`,`beta_neutral/`,`blend/`(names as generated):
-         - alpha_beta_regression.png, cumulative_returns.png, drawdown_underwater.png, rolling_corr.png, rolling_sharpe.png, daily_leverage.png, turnover.png
-         - additional `feature_importance/` and `classification_reports/`
-   - `shap/` — SHAP summaries/values for model explainability.
-   - `runs/<timestamp>/` — a full snapshot of that run (auto-generated plots, manifests, fingerprints, logs).
-   - `docs/` — the polished PDF: Meta-Labeling Alpha Filter — Case Review.pdf
+- `results/performance_summary.xlsx` — headline summary table used in the report
+- `results/` — backtest tables, strategy plots, and model diagnostics
+- `shap/` — SHAP summaries and explainability outputs
+- `runs/<timestamp>/` — full run snapshot including manifests, fingerprints, logs, and generated artifacts
+- `docs/` — polished case report PDF: *Meta-Labeling Alpha Filter - Case Report.pdf*
 
-> Note: blend/neutral variants show N/A for trade-level stats by design—they’re portfolio constructs, not direct trade streams, so counts/win rates don’t map 1:1 from the sleeve.
-
+> Note: blend and beta-neutral variants show N/A for trade-level statistics by design, since they are portfolio constructs rather than direct trade streams.
 ---
 
 ## Configuration (edit `config.py`)
@@ -112,7 +109,7 @@ Data sources: S&P 500 PIT membership (Aultman, MIT-licensed snapshot), Yahoo Fin
 meta-labeling-alpha-filter/
 ├── data/                 # inputs: PIT constituents snapshot, FRED CSVs (DGS10, T10Y3M), yfinance caches
 ├── docs/                 # the PDF case report
-├── figures/              # GENERATED: models calibration curevs and diagnostics
+├── figures/              # GENERATED: model calibration curves and diagnostics
 ├── models/               # GENERATED: saved models
 ├── results/              # GENERATED: backtest tables/plots and model diagnostics
 ├── runs/                 # GENERATED: per-run folders (manifests, fingerprints, logs)
@@ -141,11 +138,15 @@ meta-labeling-alpha-filter/
 
 ---
 
-## License & contact
-- **Code:** PolyForm Noncommercial 1.0.0 — free for noncommercial use (evaluation, research, hiring).
-- **Report (PDF in /docs):** CC BY-NC-ND 4.0 — shareable with attribution, noncommercial, no derivatives.
+## License
 
-For commercial licensing inquiries, contact me via LinkedIn.
+The source code in this repository is licensed under the **BSD 3-Clause License**. See the `LICENSE` file for details.
+
+The case report in `docs/` remains licensed separately under the **Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License (CC BY-NC-ND 4.0)**.
 
 ## Contact
-Gautier Petit · [GitHub](github.com/gautierpetit) · [LinkedIn](linkedin.com/in/gautierpetitch)
+
+**Gautier Petit** 
+
+- [GitHub](https://github.com/gautierpetit): gautierpetit
+- [LinkedIn](https://www.linkedin.com/in/gautierpetitch): gautierpetitch
