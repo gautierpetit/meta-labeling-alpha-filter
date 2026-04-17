@@ -14,9 +14,6 @@ We turn a noisy momentum sleeve into a disciplined, probability-aware process. A
 
 Full tables/figures are in the [case report PDF](docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf) and under `results/` & `figures/`.
 
-[⬇️ Download the PDF](https://github.com/gautierpetit/meta-labeling-alpha-filter/blob/main/docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf?raw=1)
-
-
 This project emphasizes rigorous data hygiene, explicit out-of-sample evaluation, calibration-first modeling, probability-aware execution, and realistic portfolio frictions. It is intended as a research case study in systematic signal refinement rather than a claim of production-ready live performance.
 
 ---
@@ -142,7 +139,7 @@ meta-labeling-alpha-filter/
 
 The source code in this repository is licensed under the **BSD 3-Clause License**. See the `LICENSE` file for details.
 
-The case report in `docs/` remains licensed separately under the **Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License (CC BY-NC-ND 4.0)**.
+The [case report PDF](docs/Meta-Labeling%20Alpha%20Filter%20-%20Case%20Report.pdf) remains licensed separately under the **Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License (CC BY-NC-ND 4.0)**.
 
 ## Contact
 
